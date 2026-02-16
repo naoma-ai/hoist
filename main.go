@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -9,16 +10,23 @@ import (
 
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "hoist",
-		Short: "Deploy services to remote nodes",
+		Use:           "hoist",
+		Short:         "Deploy services to remote nodes",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
+	addDeployToRoot(cmd)
 	cmd.AddCommand(newTagCmd())
 	return cmd
 }
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, errCancelled) {
+			fmt.Println("deploy cancelled")
+			return
+		}
+		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 }
