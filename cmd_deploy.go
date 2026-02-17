@@ -63,10 +63,21 @@ func newProviders(ctx context.Context, cfg config) (providers, error) {
 		}
 	}
 
+	var staticBucket string
+	for _, svc := range cfg.Services {
+		if svc.Type == "static" {
+			for _, ec := range svc.Env {
+				staticBucket = ec.Bucket
+				break
+			}
+			break
+		}
+	}
+
 	return providers{
 		builds: map[string]buildsProvider{
 			"server": &serverBuildsProvider{ecr: ecrClient, repoName: serverRepo},
-			"static": &staticBuildsProvider{builds: nil},
+			"static": &staticBuildsProvider{s3: s3Client, bucket: staticBucket},
 		},
 		deployers: map[string]deployer{
 			"server": &serverDeployer{},
