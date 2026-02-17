@@ -16,8 +16,10 @@ func newBuildsCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "builds",
-		Short: "List recent builds",
+		Use:           "builds",
+		Short:         "List recent builds",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(cfgPath)
 			if err != nil {

@@ -14,8 +14,10 @@ func newStatusCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show current deploy status for all services",
+		Use:           "status",
+		Short:         "Show current deploy status for all services",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(cfgPath)
 			if err != nil {

@@ -19,8 +19,10 @@ func newLogsCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "logs",
-		Short: "Tail logs from running containers",
+		Use:           "logs",
+		Short:         "Tail logs from running containers",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(cfgPath)
 			if err != nil {

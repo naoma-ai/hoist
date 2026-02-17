@@ -67,9 +67,11 @@ func newRollbackCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "rollback <environment>",
-		Short: "Redeploy previous build for services in an environment",
-		Args:  cobra.ExactArgs(1),
+		Use:           "rollback <environment>",
+		Short:         "Redeploy previous build for services in an environment",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env := args[0]
 

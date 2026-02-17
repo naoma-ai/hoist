@@ -13,8 +13,10 @@ import (
 func newTagCmd() *cobra.Command {
 	var attempt int
 	cmd := &cobra.Command{
-		Use:   "tag",
-		Short: "Generate a build tag from git state",
+		Use:           "tag",
+		Short:         "Generate a build tag from git state",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			branch, sha, err := resolveGitInfo()
 			if err != nil {

@@ -67,7 +67,7 @@ func newProviders(cfg config) providers {
 			"static": &staticDeployer{},
 		},
 		history: map[string]historyProvider{
-			"server": &serverHistoryProvider{},
+			"server": &serverHistoryProvider{cfg: cfg, run: sshRun},
 			"static": &staticHistoryProvider{},
 		},
 		logs: map[string]logsProvider{
