@@ -81,13 +81,17 @@ func (c *sshClient) run(ctx context.Context, cmd string) (string, error) {
 		}
 	}()
 
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
+	session.Stderr = &stderr
 
 	err = session.Run(cmd)
 	close(done)
 
 	if err != nil {
+		if stderr.Len() > 0 {
+			return "", fmt.Errorf("running %q: %w\n%s", cmd, err, stderr.String())
+		}
 		return "", fmt.Errorf("running %q: %w", cmd, err)
 	}
 

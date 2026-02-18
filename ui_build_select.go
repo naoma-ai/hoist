@@ -23,29 +23,31 @@ type historyLoadedMsg struct {
 type historyErrorMsg struct{ err error }
 
 type buildPickerModel struct {
-	bp           buildsProvider
-	builds       []build
-	liveTags     map[string]bool
-	previousTags map[string]string
-	env          string
-	cursor       int
-	loading      bool
-	hasMore      bool
-	pageSize     int
-	offset       int
-	done         bool
-	cancelled    bool
-	fetchHistory func(ctx context.Context) (map[string]bool, map[string]string, error)
-	historyErr   error
+	bp             buildsProvider
+	builds         []build
+	liveTags       map[string]bool
+	previousTags   map[string]string
+	env            string
+	cursor         int
+	loading        bool
+	historyLoading bool
+	hasMore        bool
+	pageSize       int
+	offset         int
+	done           bool
+	cancelled      bool
+	fetchHistory   func(ctx context.Context) (map[string]bool, map[string]string, error)
+	historyErr     error
 }
 
 func newBuildPickerModel(bp buildsProvider, env string, fetchHistory func(ctx context.Context) (map[string]bool, map[string]string, error)) buildPickerModel {
 	return buildPickerModel{
-		bp:           bp,
-		env:          env,
-		loading:      true,
-		pageSize:     20,
-		fetchHistory: fetchHistory,
+		bp:             bp,
+		env:            env,
+		loading:        true,
+		historyLoading: fetchHistory != nil,
+		pageSize:       20,
+		fetchHistory:   fetchHistory,
 	}
 }
 
@@ -95,14 +97,16 @@ func (m buildPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case historyLoadedMsg:
 		m.liveTags = msg.liveTags
 		m.previousTags = msg.previousTags
+		m.historyLoading = false
 		return m, nil
 
 	case historyErrorMsg:
 		m.historyErr = msg.err
+		m.historyLoading = false
 		return m, nil
 
 	case tea.KeyMsg:
-		if m.loading {
+		if m.loading || m.historyLoading {
 			return m, nil
 		}
 		totalRows := len(m.builds)
@@ -144,7 +148,7 @@ func (m buildPickerModel) View() string {
 
 	var b strings.Builder
 
-	if m.loading && len(m.builds) == 0 {
+	if m.loading || m.historyLoading {
 		b.WriteString("Loading builds...\n")
 		return b.String()
 	}

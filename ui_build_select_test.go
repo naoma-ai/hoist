@@ -207,25 +207,33 @@ func TestBuildPickerHistoryAndBuildsLoad(t *testing.T) {
 	}
 	m := newBuildPickerModel(bp, "staging", fetchHistory)
 
-	// Builds arrive first.
+	// Builds arrive first — view should still show loading (waiting for history).
 	m, _ = updateBuilds(m, buildsLoadedMsg{builds: builds, hasMore: false})
 	if m.loading {
-		t.Fatal("should not be loading after builds arrive")
+		t.Fatal("builds loading flag should be false after builds arrive")
 	}
-	// liveTags not set yet.
+	if !m.historyLoading {
+		t.Fatal("history should still be loading")
+	}
 	view := m.View()
-	if strings.Contains(view, "[LIVE]") {
-		t.Fatal("should not show LIVE marker before history loads")
+	if !strings.Contains(view, "Loading builds...") {
+		t.Fatal("should show loading screen while history is pending")
 	}
 
-	// History arrives.
+	// History arrives — now show the full list with LIVE markers.
 	m, _ = updateBuilds(m, historyLoadedMsg{
 		liveTags:     map[string]bool{liveTag: true},
 		previousTags: map[string]string{"backend": liveTag},
 	})
+	if m.historyLoading {
+		t.Fatal("history should not be loading after arrival")
+	}
 	view = m.View()
 	if !strings.Contains(view, "[LIVE]") {
 		t.Fatal("should show LIVE marker after history loads")
+	}
+	if !strings.Contains(view, "Currently live in staging") {
+		t.Fatal("should show currently live header")
 	}
 	if m.previousTags["backend"] != liveTag {
 		t.Fatalf("expected previousTags[backend] = %s, got %s", liveTag, m.previousTags["backend"])

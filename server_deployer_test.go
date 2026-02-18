@@ -79,40 +79,50 @@ func TestBuildDockerRunArgsEmptyOldTag(t *testing.T) {
 }
 
 func TestPollHealthcheckImmediateSuccess(t *testing.T) {
-	mock := &mockSSHRunner{}
-	err := pollHealthcheck(context.Background(), mock, 8080, "/health", 10*time.Millisecond, 1*time.Second)
+	mock := &mockSSHRunner{
+		responses: []mockRunResult{
+			{output: "172.17.0.2"}, // docker inspect
+			{output: "OK"},         // curl
+		},
+	}
+	err := pollHealthcheck(context.Background(), mock, "test-container", 8080, "/health", 10*time.Millisecond, 1*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(mock.commands) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(mock.commands))
+	if len(mock.commands) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(mock.commands))
 	}
-	if !strings.Contains(mock.commands[0], "curl -sf http://localhost:8080/health") {
+	if !strings.Contains(mock.commands[0], "docker inspect test-container") {
 		t.Errorf("unexpected command: %s", mock.commands[0])
+	}
+	if !strings.Contains(mock.commands[1], "curl -sf http://172.17.0.2:8080/health") {
+		t.Errorf("unexpected command: %s", mock.commands[1])
 	}
 }
 
 func TestPollHealthcheckEventualSuccess(t *testing.T) {
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{err: fmt.Errorf("unhealthy")},
-			{err: fmt.Errorf("unhealthy")},
-			{err: fmt.Errorf("unhealthy")},
-			{output: "OK"},
+			{output: "172.17.0.2"},        // docker inspect
+			{err: fmt.Errorf("unhealthy")}, // curl 1
+			{err: fmt.Errorf("unhealthy")}, // curl 2
+			{err: fmt.Errorf("unhealthy")}, // curl 3
+			{output: "OK"},                 // curl 4
 		},
 	}
-	err := pollHealthcheck(context.Background(), mock, 8080, "/health", 10*time.Millisecond, 1*time.Second)
+	err := pollHealthcheck(context.Background(), mock, "test-container", 8080, "/health", 10*time.Millisecond, 1*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(mock.commands) != 4 {
-		t.Fatalf("expected 4 commands, got %d", len(mock.commands))
+	if len(mock.commands) != 5 {
+		t.Fatalf("expected 5 commands, got %d", len(mock.commands))
 	}
 }
 
 func TestPollHealthcheckTimeout(t *testing.T) {
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
+			{output: "172.17.0.2"},
 			{err: fmt.Errorf("unhealthy")},
 			{err: fmt.Errorf("unhealthy")},
 			{err: fmt.Errorf("unhealthy")},
@@ -125,7 +135,7 @@ func TestPollHealthcheckTimeout(t *testing.T) {
 			{err: fmt.Errorf("unhealthy")},
 		},
 	}
-	err := pollHealthcheck(context.Background(), mock, 8080, "/health", 10*time.Millisecond, 50*time.Millisecond)
+	err := pollHealthcheck(context.Background(), mock, "test-container", 8080, "/health", 10*time.Millisecond, 50*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -137,6 +147,7 @@ func TestPollHealthcheckTimeout(t *testing.T) {
 func TestPollHealthcheckContextCancelled(t *testing.T) {
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
+			{output: "172.17.0.2"},
 			{err: fmt.Errorf("unhealthy")},
 			{err: fmt.Errorf("unhealthy")},
 			{err: fmt.Errorf("unhealthy")},
@@ -149,7 +160,7 @@ func TestPollHealthcheckContextCancelled(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 		cancel()
 	}()
-	err := pollHealthcheck(ctx, mock, 8080, "/health", 10*time.Millisecond, 5*time.Second)
+	err := pollHealthcheck(ctx, mock, "test-container", 8080, "/health", 10*time.Millisecond, 5*time.Second)
 	if err == nil {
 		t.Fatal("expected error from context cancellation")
 	}
@@ -182,9 +193,9 @@ func TestServerDeployHappyPath(t *testing.T) {
 		t.Errorf("expected dial addr 10.0.0.1, got %s", dialAddr)
 	}
 
-	// Expect: pull, run, healthcheck (1 call), stop old, rm old = 5 commands.
-	if len(mock.commands) < 5 {
-		t.Fatalf("expected at least 5 commands, got %d: %v", len(mock.commands), mock.commands)
+	// Expect: pull, run, docker inspect, curl healthcheck, stop old, rm old = 6 commands.
+	if len(mock.commands) < 6 {
+		t.Fatalf("expected at least 6 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	if !strings.HasPrefix(mock.commands[0], "docker pull myapp/backend:main-abc1234-20250101000000") {
@@ -193,8 +204,11 @@ func TestServerDeployHappyPath(t *testing.T) {
 	if !strings.HasPrefix(mock.commands[1], "docker run") {
 		t.Errorf("cmd[1] = %q, want docker run", mock.commands[1])
 	}
-	if !strings.Contains(mock.commands[2], "curl -sf") {
-		t.Errorf("cmd[2] = %q, want curl healthcheck", mock.commands[2])
+	if !strings.Contains(mock.commands[2], "docker inspect") {
+		t.Errorf("cmd[2] = %q, want docker inspect", mock.commands[2])
+	}
+	if !strings.Contains(mock.commands[3], "curl -sf") {
+		t.Errorf("cmd[3] = %q, want curl healthcheck", mock.commands[3])
 	}
 
 	// Last two: stop and rm old container.

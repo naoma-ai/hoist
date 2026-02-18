@@ -38,7 +38,7 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 
 	// Start new container.
 	runArgs := buildDockerRunArgs(d.cfg.Project, service, tag, oldTag, svc, ec, env)
-	runCmd := "docker run " + strings.Join(runArgs, " ")
+	runCmd := "docker run " + shellJoin(runArgs)
 	if _, err := client.run(ctx, runCmd); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
@@ -53,10 +53,11 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 		timeout = 120 * time.Second
 	}
 
-	if err := pollHealthcheck(ctx, client, svc.Port, svc.Healthcheck, interval, timeout); err != nil {
+	containerName := service + "-" + tag
+	if err := pollHealthcheck(ctx, client, containerName, svc.Port, svc.Healthcheck, interval, timeout); err != nil {
 		// Clean up failed new container (best-effort).
-		client.run(ctx, fmt.Sprintf("docker stop %s-%s", service, tag))
-		client.run(ctx, fmt.Sprintf("docker rm %s-%s", service, tag))
+		client.run(ctx, fmt.Sprintf("docker stop %s", containerName))
+		client.run(ctx, fmt.Sprintf("docker rm %s", containerName))
 		return fmt.Errorf("healthcheck failed: %w", err)
 	}
 
@@ -89,8 +90,24 @@ func buildDockerRunArgs(project, service, tag, oldTag string, svc serviceConfig,
 	}
 }
 
-func pollHealthcheck(ctx context.Context, client sshRunner, port int, path string, interval, timeout time.Duration) error {
-	healthCmd := fmt.Sprintf("curl -sf http://localhost:%d%s", port, path)
+// shellJoin quotes each argument for safe use in a shell command string.
+func shellJoin(args []string) string {
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		quoted[i] = "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+	}
+	return strings.Join(quoted, " ")
+}
+
+func pollHealthcheck(ctx context.Context, client sshRunner, container string, port int, path string, interval, timeout time.Duration) error {
+	// Get the container's bridge IP to healthcheck it directly,
+	// avoiding Traefik routing to the old container during blue-green deploy.
+	ipCmd := fmt.Sprintf("docker inspect %s --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'", container)
+	ip, err := client.run(ctx, ipCmd)
+	if err != nil {
+		return fmt.Errorf("getting container IP: %w", err)
+	}
+	healthCmd := fmt.Sprintf("curl -sf http://%s:%d%s", ip, port, path)
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
