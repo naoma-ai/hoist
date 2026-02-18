@@ -7,6 +7,7 @@ import (
 
 func testConfigYAML() string {
 	return `
+project: myapp
 nodes:
   web1: 10.0.0.1
   web2: 10.0.0.2
@@ -93,6 +94,7 @@ func TestLogsCommandEnvNotFound(t *testing.T) {
 
 func TestLogsCommandNoCommonEnv(t *testing.T) {
 	yaml := `
+project: test
 nodes:
   n1: 10.0.0.1
 services:

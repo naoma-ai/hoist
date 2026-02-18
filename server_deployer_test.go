@@ -36,7 +36,7 @@ func TestBuildDockerRunArgs(t *testing.T) {
 	svc := serviceConfig{Image: "myapp/backend", Port: 8080, Healthcheck: "/health"}
 	ec := envConfig{Host: "api.staging.example.com", EnvFile: "/etc/backend/staging.env"}
 
-	args := buildDockerRunArgs("backend", "main-abc1234-20250101000000", "main-old1234-20241231000000", svc, ec, "staging")
+	args := buildDockerRunArgs("myapp", "backend", "main-abc1234-20250101000000", "main-old1234-20241231000000", svc, ec, "staging")
 	joined := strings.Join(args, " ")
 
 	checks := []string{
@@ -45,7 +45,7 @@ func TestBuildDockerRunArgs(t *testing.T) {
 		"--restart unless-stopped",
 		"--env-file /etc/backend/staging.env",
 		"--log-driver awslogs",
-		"awslogs-group=/naoma/staging/backend",
+		"awslogs-group=/myapp/staging/backend",
 		"traefik.enable=true",
 		"traefik.http.routers.backend.rule=Host(`api.staging.example.com`)",
 		"traefik.http.services.backend.loadbalancer.server.port=8080",
@@ -69,7 +69,7 @@ func TestBuildDockerRunArgsEmptyOldTag(t *testing.T) {
 	svc := serviceConfig{Image: "myapp/backend", Port: 8080, Healthcheck: "/health"}
 	ec := envConfig{Host: "api.example.com", EnvFile: "/etc/backend/prod.env"}
 
-	args := buildDockerRunArgs("backend", "main-abc1234-20250101000000", "", svc, ec, "production")
+	args := buildDockerRunArgs("myapp", "backend", "main-abc1234-20250101000000", "", svc, ec, "production")
 	joined := strings.Join(args, " ")
 
 	// Label should still be present with empty value.

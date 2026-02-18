@@ -109,6 +109,7 @@ func (m *mockDeployer) deploy(ctx context.Context, service, env, tag, oldTag str
 
 func testConfig() config {
 	return config{
+		Project: "myapp",
 		Nodes: map[string]string{
 			"web1": "10.0.0.1",
 			"web2": "10.0.0.2",

@@ -15,32 +15,56 @@ type buildsLoadedMsg struct {
 
 type buildsErrorMsg struct{ err error }
 
-type buildPickerModel struct {
-	bp        buildsProvider
-	builds    []build
-	liveTags  map[string]bool
-	env       string
-	cursor    int
-	loading   bool
-	hasMore   bool
-	pageSize  int
-	offset    int
-	done      bool
-	cancelled bool
+type historyLoadedMsg struct {
+	liveTags     map[string]bool
+	previousTags map[string]string
 }
 
-func newBuildPickerModel(bp buildsProvider, liveTags map[string]bool, env string) buildPickerModel {
+type historyErrorMsg struct{ err error }
+
+type buildPickerModel struct {
+	bp           buildsProvider
+	builds       []build
+	liveTags     map[string]bool
+	previousTags map[string]string
+	env          string
+	cursor       int
+	loading      bool
+	hasMore      bool
+	pageSize     int
+	offset       int
+	done         bool
+	cancelled    bool
+	fetchHistory func(ctx context.Context) (map[string]bool, map[string]string, error)
+	historyErr   error
+}
+
+func newBuildPickerModel(bp buildsProvider, env string, fetchHistory func(ctx context.Context) (map[string]bool, map[string]string, error)) buildPickerModel {
 	return buildPickerModel{
-		bp:       bp,
-		liveTags: liveTags,
-		env:      env,
-		loading:  true,
-		pageSize: 20,
+		bp:           bp,
+		env:          env,
+		loading:      true,
+		pageSize:     20,
+		fetchHistory: fetchHistory,
 	}
 }
 
 func (m buildPickerModel) Init() tea.Cmd {
-	return m.fetchBuilds(m.pageSize, 0)
+	fetchBuilds := m.fetchBuilds(m.pageSize, 0)
+	if m.fetchHistory == nil {
+		return fetchBuilds
+	}
+	fn := m.fetchHistory
+	return tea.Batch(
+		fetchBuilds,
+		func() tea.Msg {
+			liveTags, previousTags, err := fn(context.Background())
+			if err != nil {
+				return historyErrorMsg{err: err}
+			}
+			return historyLoadedMsg{liveTags: liveTags, previousTags: previousTags}
+		},
+	)
 }
 
 func (m buildPickerModel) fetchBuilds(limit, offset int) tea.Cmd {
@@ -66,6 +90,15 @@ func (m buildPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case buildsErrorMsg:
 		m.loading = false
+		return m, nil
+
+	case historyLoadedMsg:
+		m.liveTags = msg.liveTags
+		m.previousTags = msg.previousTags
+		return m, nil
+
+	case historyErrorMsg:
+		m.historyErr = msg.err
 		return m, nil
 
 	case tea.KeyMsg:

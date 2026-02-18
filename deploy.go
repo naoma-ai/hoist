@@ -123,38 +123,56 @@ func runDeploy(ctx context.Context, cfg config, p providers, opts deployOpts) er
 		}
 	}
 
-	liveTags := make(map[string]bool)
-	previousTags := make(map[string]string)
-	for _, svc := range services {
-		svcCfg := cfg.Services[svc]
-		hp, ok := p.history[svcCfg.Type]
-		if !ok {
-			continue
+	fetchHistory := func(ctx context.Context) (map[string]bool, map[string]string, error) {
+		liveTags := make(map[string]bool)
+		previousTags := make(map[string]string)
+		for _, svc := range services {
+			svcCfg := cfg.Services[svc]
+			hp, ok := p.history[svcCfg.Type]
+			if !ok {
+				continue
+			}
+			cur, err := hp.current(ctx, svc, env)
+			if err != nil {
+				return nil, nil, fmt.Errorf("getting current deploy for %s: %w", svc, err)
+			}
+			if cur.Tag != "" {
+				liveTags[cur.Tag] = true
+				previousTags[svc] = cur.Tag
+			}
 		}
-		cur, err := hp.current(ctx, svc, env)
-		if err != nil {
-			return fmt.Errorf("getting current deploy for %s: %w", svc, err)
-		}
-		if cur.Tag != "" {
-			liveTags[cur.Tag] = true
-			previousTags[svc] = cur.Tag
-		}
+		return liveTags, previousTags, nil
 	}
 
 	// Resolve per-service tags: either pre-provided, from --build flag, or interactive
 	tags := opts.Tags
-	if tags == nil {
+	var previousTags map[string]string
+	if tags != nil {
+		// Pre-resolved tags (e.g. rollback): fetch history synchronously.
+		_, prevTags, err := fetchHistory(ctx)
+		if err != nil {
+			return err
+		}
+		previousTags = prevTags
+	} else {
 		bp := buildsForServices(cfg, p, services)
 
 		var buildTag string
 		if opts.Build != "" {
-			var err error
+			// Non-interactive: need history before resolving build.
+			liveTags, prevTags, err := fetchHistory(ctx)
+			if err != nil {
+				return err
+			}
+			_ = liveTags
+			previousTags = prevTags
+
 			buildTag, err = resolveBuildTag(ctx, bp, opts.Build)
 			if err != nil {
 				return fmt.Errorf("resolving build: %w", err)
 			}
 		} else {
-			result, err := tea.NewProgram(newBuildPickerModel(bp, liveTags, env)).Run()
+			result, err := tea.NewProgram(newBuildPickerModel(bp, env, fetchHistory)).Run()
 			if err != nil {
 				return fmt.Errorf("build picker: %w", err)
 			}
@@ -162,10 +180,14 @@ func runDeploy(ctx context.Context, cfg config, p providers, opts deployOpts) er
 			if bm.cancelled {
 				return errCancelled
 			}
+			if bm.historyErr != nil {
+				return bm.historyErr
+			}
 			if bm.cursor >= len(bm.builds) {
 				return fmt.Errorf("no build selected")
 			}
 			buildTag = bm.builds[bm.cursor].Tag
+			previousTags = bm.previousTags
 		}
 
 		tags = make(map[string]string, len(services))

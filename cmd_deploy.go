@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
@@ -54,6 +55,7 @@ func newProviders(ctx context.Context, cfg config) (providers, error) {
 	}
 	s3Client := s3.NewFromConfig(awsCfg)
 	ecrClient := ecr.NewFromConfig(awsCfg)
+	cfClient := cloudfront.NewFromConfig(awsCfg)
 
 	var serverRepo string
 	for _, svc := range cfg.Services {
@@ -84,7 +86,7 @@ func newProviders(ctx context.Context, cfg config) (providers, error) {
 				cfg:  cfg,
 				dial: func(addr string) (sshRunner, error) { return sshDial(addr) },
 			},
-			"static": &staticDeployer{},
+			"static": &staticDeployer{cfg: cfg, s3: s3Client, cloudfront: cfClient},
 		},
 		history: map[string]historyProvider{
 			"server": &serverHistoryProvider{cfg: cfg, run: sshRun},

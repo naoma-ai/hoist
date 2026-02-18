@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func sampleBuilds(n int) []build {
 
 func TestBuildPickerInitLoading(t *testing.T) {
 	bp := &mockBuildsProvider{builds: sampleBuilds(5)}
-	m := newBuildPickerModel(bp, nil, "staging")
+	m := newBuildPickerModel(bp, "staging", nil)
 
 	if !m.loading {
 		t.Fatal("should start in loading state")
@@ -52,7 +53,7 @@ func TestBuildPickerInitLoading(t *testing.T) {
 
 func TestBuildPickerPagination(t *testing.T) {
 	bp := &mockBuildsProvider{builds: sampleBuilds(25)}
-	m := newBuildPickerModel(bp, nil, "staging")
+	m := newBuildPickerModel(bp, "staging", nil)
 
 	// Load first page
 	cmd := m.Init()
@@ -94,11 +95,17 @@ func TestBuildPickerLiveMarker(t *testing.T) {
 	builds := sampleBuilds(3)
 	liveTag := builds[1].Tag
 	bp := &mockBuildsProvider{builds: builds}
-	m := newBuildPickerModel(bp, map[string]bool{liveTag: true}, "staging")
+	fetchHistory := func(_ context.Context) (map[string]bool, map[string]string, error) {
+		return map[string]bool{liveTag: true}, map[string]string{"frontend": liveTag}, nil
+	}
+	m := newBuildPickerModel(bp, "staging", fetchHistory)
 
-	cmd := m.Init()
-	msg := cmd()
-	m, _ = updateBuilds(m, msg)
+	// Init returns a batch; simulate both commands resolving.
+	m, _ = updateBuilds(m, buildsLoadedMsg{builds: builds, hasMore: false})
+	m, _ = updateBuilds(m, historyLoadedMsg{
+		liveTags:     map[string]bool{liveTag: true},
+		previousTags: map[string]string{"frontend": liveTag},
+	})
 
 	view := m.View()
 	if !strings.Contains(view, "[LIVE]") {
@@ -112,7 +119,7 @@ func TestBuildPickerLiveMarker(t *testing.T) {
 func TestBuildPickerSelection(t *testing.T) {
 	builds := sampleBuilds(3)
 	bp := &mockBuildsProvider{builds: builds}
-	m := newBuildPickerModel(bp, nil, "staging")
+	m := newBuildPickerModel(bp, "staging", nil)
 
 	cmd := m.Init()
 	msg := cmd()
@@ -133,7 +140,7 @@ func TestBuildPickerSelection(t *testing.T) {
 
 func TestBuildPickerPreSelection(t *testing.T) {
 	bp := &mockBuildsProvider{builds: sampleBuilds(5)}
-	m := newBuildPickerModel(bp, nil, "staging")
+	m := newBuildPickerModel(bp, "staging", nil)
 
 	if m.cursor != 0 {
 		t.Fatalf("cursor should start at 0, got %d", m.cursor)
@@ -142,7 +149,7 @@ func TestBuildPickerPreSelection(t *testing.T) {
 
 func TestBuildPickerEmptyResults(t *testing.T) {
 	bp := &mockBuildsProvider{builds: nil}
-	m := newBuildPickerModel(bp, nil, "staging")
+	m := newBuildPickerModel(bp, "staging", nil)
 
 	cmd := m.Init()
 	msg := cmd()
@@ -158,7 +165,7 @@ func TestBuildPickerEmptyResults(t *testing.T) {
 
 func TestBuildPickerCancel(t *testing.T) {
 	bp := &mockBuildsProvider{builds: sampleBuilds(3)}
-	m := newBuildPickerModel(bp, nil, "staging")
+	m := newBuildPickerModel(bp, "staging", nil)
 
 	cmd := m.Init()
 	msg := cmd()
@@ -170,5 +177,57 @@ func TestBuildPickerCancel(t *testing.T) {
 	}
 	if !m.cancelled {
 		t.Fatal("expected cancelled to be true")
+	}
+}
+
+func TestBuildPickerHistoryError(t *testing.T) {
+	bp := &mockBuildsProvider{builds: sampleBuilds(3)}
+	fetchHistory := func(_ context.Context) (map[string]bool, map[string]string, error) {
+		return nil, nil, fmt.Errorf("SSH connection refused")
+	}
+	m := newBuildPickerModel(bp, "staging", fetchHistory)
+
+	// Simulate history error arriving.
+	m, _ = updateBuilds(m, historyErrorMsg{err: fmt.Errorf("SSH connection refused")})
+
+	if m.historyErr == nil {
+		t.Fatal("expected historyErr to be set")
+	}
+	if !strings.Contains(m.historyErr.Error(), "SSH connection refused") {
+		t.Fatalf("expected SSH error, got: %v", m.historyErr)
+	}
+}
+
+func TestBuildPickerHistoryAndBuildsLoad(t *testing.T) {
+	builds := sampleBuilds(3)
+	liveTag := builds[0].Tag
+	bp := &mockBuildsProvider{builds: builds}
+	fetchHistory := func(_ context.Context) (map[string]bool, map[string]string, error) {
+		return map[string]bool{liveTag: true}, map[string]string{"backend": liveTag}, nil
+	}
+	m := newBuildPickerModel(bp, "staging", fetchHistory)
+
+	// Builds arrive first.
+	m, _ = updateBuilds(m, buildsLoadedMsg{builds: builds, hasMore: false})
+	if m.loading {
+		t.Fatal("should not be loading after builds arrive")
+	}
+	// liveTags not set yet.
+	view := m.View()
+	if strings.Contains(view, "[LIVE]") {
+		t.Fatal("should not show LIVE marker before history loads")
+	}
+
+	// History arrives.
+	m, _ = updateBuilds(m, historyLoadedMsg{
+		liveTags:     map[string]bool{liveTag: true},
+		previousTags: map[string]string{"backend": liveTag},
+	})
+	view = m.View()
+	if !strings.Contains(view, "[LIVE]") {
+		t.Fatal("should show LIVE marker after history loads")
+	}
+	if m.previousTags["backend"] != liveTag {
+		t.Fatalf("expected previousTags[backend] = %s, got %s", liveTag, m.previousTags["backend"])
 	}
 }

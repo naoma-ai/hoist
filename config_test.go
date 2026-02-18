@@ -21,6 +21,8 @@ func writeTemp(t *testing.T, content string) string {
 
 func TestLoadConfigValidFull(t *testing.T) {
 	yaml := `
+project: myapp
+
 nodes:
   prod1: 10.0.0.1
   staging1: 10.0.0.2
@@ -56,6 +58,7 @@ services:
 	}
 
 	want := config{
+		Project: "myapp",
 		Nodes: map[string]string{
 			"prod1":    "10.0.0.1",
 			"staging1": "10.0.0.2",
@@ -95,6 +98,7 @@ func TestLoadConfigServerMissingFields(t *testing.T) {
 		{
 			name: "missing image",
 			yaml: `
+project: test
 nodes:
   n1: 10.0.0.1
 services:
@@ -113,6 +117,7 @@ services:
 		{
 			name: "missing port",
 			yaml: `
+project: test
 nodes:
   n1: 10.0.0.1
 services:
@@ -131,6 +136,7 @@ services:
 		{
 			name: "missing healthcheck",
 			yaml: `
+project: test
 nodes:
   n1: 10.0.0.1
 services:
@@ -170,6 +176,7 @@ func TestLoadConfigServerEnvMissingFields(t *testing.T) {
 		{
 			name: "missing node",
 			yaml: `
+project: test
 nodes:
   n1: 10.0.0.1
 services:
@@ -188,6 +195,7 @@ services:
 		{
 			name: "missing host",
 			yaml: `
+project: test
 nodes:
   n1: 10.0.0.1
 services:
@@ -206,6 +214,7 @@ services:
 		{
 			name: "missing envfile",
 			yaml: `
+project: test
 nodes:
   n1: 10.0.0.1
 services:
@@ -238,6 +247,7 @@ services:
 
 func TestLoadConfigUndefinedNode(t *testing.T) {
 	yaml := `
+project: test
 nodes:
   n1: 10.0.0.1
 services:
@@ -263,6 +273,7 @@ services:
 
 func TestLoadConfigUnknownServiceType(t *testing.T) {
 	yaml := `
+project: test
 services:
   fn:
     type: lambda
@@ -281,6 +292,7 @@ services:
 
 func TestLoadConfigEmptyServices(t *testing.T) {
 	yaml := `
+project: test
 services: {}
 `
 	_, err := loadConfig(writeTemp(t, yaml))
@@ -294,6 +306,7 @@ services: {}
 
 func TestLoadConfigServiceNoEnvironments(t *testing.T) {
 	yaml := `
+project: test
 services:
   api:
     type: server
@@ -313,6 +326,7 @@ services:
 
 func TestLoadConfigStaticWithoutServerFields(t *testing.T) {
 	yaml := `
+project: test
 services:
   web:
     type: static
@@ -336,6 +350,7 @@ func TestLoadConfigStaticEnvMissingFields(t *testing.T) {
 		{
 			name: "missing bucket",
 			yaml: `
+project: test
 services:
   web:
     type: static
@@ -348,6 +363,7 @@ services:
 		{
 			name: "missing cloudfront",
 			yaml: `
+project: test
 services:
   web:
     type: static

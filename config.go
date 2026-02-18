@@ -8,6 +8,7 @@ import (
 )
 
 type config struct {
+	Project  string                   `yaml:"project"`
 	Nodes    map[string]string        `yaml:"nodes"`
 	Services map[string]serviceConfig `yaml:"services"`
 }
@@ -49,6 +50,10 @@ func loadConfig(path string) (config, error) {
 }
 
 func validateConfig(cfg config) error {
+	if cfg.Project == "" {
+		return fmt.Errorf("missing project name")
+	}
+
 	if len(cfg.Services) == 0 {
 		return fmt.Errorf("no services defined")
 	}
