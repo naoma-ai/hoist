@@ -58,30 +58,21 @@ func newProviders(ctx context.Context, cfg config) (providers, error) {
 	ecrClient := ecr.NewFromConfig(awsCfg)
 	cfClient := cloudfront.NewFromConfig(awsCfg)
 
-	var serverRepo string
-	for _, svc := range cfg.Services {
-		if svc.Type == "server" {
-			serverRepo = parseECRRepo(svc.Image)
-			break
-		}
-	}
-
-	var staticBucket string
-	for _, svc := range cfg.Services {
-		if svc.Type == "static" {
+	builds := make(map[string]buildsProvider, len(cfg.Services))
+	for name, svc := range cfg.Services {
+		switch svc.Type {
+		case "server":
+			builds[name] = &serverBuildsProvider{ecr: ecrClient, repoName: parseECRRepo(svc.Image)}
+		case "static":
 			for _, ec := range svc.Env {
-				staticBucket = ec.Bucket
+				builds[name] = &staticBuildsProvider{s3: s3Client, bucket: ec.Bucket}
 				break
 			}
-			break
 		}
 	}
 
 	return providers{
-		builds: map[string]buildsProvider{
-			"server": &serverBuildsProvider{ecr: ecrClient, repoName: serverRepo},
-			"static": &staticBuildsProvider{s3: s3Client, bucket: staticBucket},
-		},
+		builds: builds,
 		deployers: map[string]deployer{
 			"server": &serverDeployer{
 				cfg:  cfg,

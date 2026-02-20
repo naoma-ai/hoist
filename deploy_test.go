@@ -160,8 +160,8 @@ func testProviders(builds []build, deploys map[string]deploy) (providers, *mockD
 	mh := &mockHistoryProvider{deploys: deploys}
 	return providers{
 		builds: map[string]buildsProvider{
-			"server": bp,
-			"static": bp,
+			"backend":  bp,
+			"frontend": bp,
 		},
 		deployers: map[string]deployer{
 			"server": md,
@@ -661,8 +661,8 @@ func TestBuildsForServicesIntersection(t *testing.T) {
 
 	p := providers{
 		builds: map[string]buildsProvider{
-			"server": serverBuilds,
-			"static": staticBuilds,
+			"backend":  serverBuilds,
+			"frontend": staticBuilds,
 		},
 	}
 
@@ -704,11 +704,14 @@ func TestBuildsForServicesSingleType(t *testing.T) {
 		{Tag: "main-abc1234-20250101100000"},
 	}}
 	p := providers{
-		builds: map[string]buildsProvider{"server": bp},
+		builds: map[string]buildsProvider{
+			"api":     bp,
+			"workers": bp,
+		},
 	}
 
 	result := buildsForServices(cfg, p, []string{"api", "workers"})
-	// When all services use the same provider, no intersection needed — return it directly
+	// When all services share the same provider instance, no intersection needed — return it directly
 	builds, err := result.listBuilds(context.Background(), 10, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

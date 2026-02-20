@@ -446,20 +446,21 @@ func envIntersection(cfg config, services []string) []string {
 }
 
 // buildsForServices returns a builds provider for the selected services.
-// When services use different provider types, it returns a merged provider
+// When services have different builds providers, it returns a merged provider
 // that intersects results — only builds present in all providers are returned.
 func buildsForServices(cfg config, p providers, services []string) buildsProvider {
-	seen := map[string]bool{}
+	seen := map[buildsProvider]bool{}
 	var unique []buildsProvider
 	for _, svc := range services {
-		t := cfg.Services[svc].Type
-		if seen[t] {
+		bp, ok := p.builds[svc]
+		if !ok {
 			continue
 		}
-		seen[t] = true
-		if bp, ok := p.builds[t]; ok {
-			unique = append(unique, bp)
+		if seen[bp] {
+			continue
 		}
+		seen[bp] = true
+		unique = append(unique, bp)
 	}
 	if len(unique) == 0 {
 		return nil
