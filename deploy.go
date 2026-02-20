@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"sync"
 	"time"
@@ -260,7 +259,7 @@ func deployAllWithUI(ctx context.Context, cfg config, p providers, services []st
 	// Print full errors after TUI exits (TUI truncates to terminal width).
 	for _, svc := range dm.failed {
 		if status := dm.results[svc]; status != nil && status.err != nil {
-			fmt.Fprintf(os.Stderr, "\n%s: %v\n", svc, status.err)
+			fmt.Printf("\n--- %s ---\n%v\n", svc, status.err)
 		}
 	}
 
