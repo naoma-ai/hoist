@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -97,7 +98,7 @@ func TestStaticDeployHappyPath(t *testing.T) {
 
 	d := &staticDeployer{cfg: cfg, s3: stub, cloudfront: cf}
 
-	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000")
+	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000", nopLogf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestStaticDeployNoOldTag(t *testing.T) {
 
 	d := &staticDeployer{cfg: cfg, s3: stub, cloudfront: cf}
 
-	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "")
+	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "", nopLogf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -184,7 +185,7 @@ func TestStaticDeployBuildNotFound(t *testing.T) {
 
 	d := &staticDeployer{cfg: cfg, s3: stub, cloudfront: cf}
 
-	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "")
+	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "", nopLogf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -208,7 +209,7 @@ func TestStaticDeployListError(t *testing.T) {
 
 	d := &staticDeployer{cfg: cfg, s3: stub, cloudfront: cf}
 
-	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "")
+	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "", nopLogf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -235,7 +236,7 @@ func TestStaticDeployCopyError(t *testing.T) {
 
 	d := &staticDeployer{cfg: cfg, s3: stub, cloudfront: cf}
 
-	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "")
+	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "", nopLogf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -266,7 +267,7 @@ func TestStaticDeployInvalidationError(t *testing.T) {
 
 	d := &staticDeployer{cfg: cfg, s3: stub, cloudfront: cf}
 
-	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "")
+	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "", nopLogf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -304,7 +305,7 @@ func TestStaticDeployPagination(t *testing.T) {
 
 	d := &staticDeployer{cfg: cfg, s3: stub, cloudfront: cf}
 
-	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "")
+	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "", nopLogf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -320,5 +321,44 @@ func TestStaticDeployPagination(t *testing.T) {
 	sort.Strings(dstKeys)
 	if dstKeys[0] != "current/page1.html" || dstKeys[1] != "current/page2.html" {
 		t.Errorf("copy destinations = %v, want [current/page1.html current/page2.html]", dstKeys)
+	}
+}
+
+func TestStaticDeployLogOutput(t *testing.T) {
+	cfg := testConfig()
+	stub := &stubS3Deploy{
+		listPages: []s3.ListObjectsV2Output{
+			{Contents: s3Objects(
+				"builds/main-abc1234-20250101000000/index.html",
+				"builds/main-abc1234-20250101000000/app.js",
+			)},
+		},
+	}
+	cf := &stubCFInvalidate{}
+	d := &staticDeployer{cfg: cfg, s3: stub, cloudfront: cf}
+
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	logf := newServiceLogf(&buf, &mu, "frontend", 8)
+	err := d.deploy(context.Background(), "frontend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000", logf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	expected := []string{
+		"writing previous-tag marker",
+		"listing build objects",
+		"found 2 objects",
+		"copying 2 objects",
+		"objects copied",
+		"writing current-tag marker",
+		"invalidating CloudFront",
+		"CloudFront invalidation created",
+	}
+	for _, e := range expected {
+		if !strings.Contains(output, e) {
+			t.Errorf("expected %q in output, got:\n%s", e, output)
+		}
 	}
 }

@@ -19,11 +19,12 @@ type serverDeployer struct {
 	pollTimeout  time.Duration // 0 means use default (120s)
 }
 
-func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag string) error {
+func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag string, logf func(string, ...any)) error {
 	svc := d.cfg.Services[service]
 	ec := svc.Env[env]
 	addr := d.cfg.Nodes[ec.Node]
 
+	logf("connecting to %s (%s)", ec.Node, addr)
 	client, err := d.dial(addr)
 	if err != nil {
 		return fmt.Errorf("connecting to %s: %w", addr, err)
@@ -32,16 +33,20 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 
 	// Pull image.
 	pullCmd := fmt.Sprintf("docker pull %s:%s", svc.Image, tag)
+	logf("$ %s", pullCmd)
 	if _, err := client.run(ctx, pullCmd); err != nil {
 		return fmt.Errorf("pulling image: %w", err)
 	}
+	logf("image pulled")
 
 	// Start new container.
 	runArgs := buildDockerRunArgs(d.cfg.Project, service, tag, oldTag, svc, ec, env)
 	runCmd := "docker run " + shellJoin(runArgs)
+	logf("$ docker run --name %s-%s ...", service, tag)
 	if _, err := client.run(ctx, runCmd); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
+	logf("container started")
 
 	// Wait for healthcheck.
 	interval := d.pollInterval
@@ -54,21 +59,28 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 	}
 
 	containerName := service + "-" + tag
+	logf("waiting for healthcheck (:%d%s, timeout %s)", svc.Port, svc.Healthcheck, timeout)
 	if err := pollHealthcheck(ctx, client, containerName, svc.Port, svc.Healthcheck, interval, timeout); err != nil {
+		logf("healthcheck failed, cleaning up new container")
 		// Clean up failed new container (best-effort).
 		client.run(ctx, fmt.Sprintf("docker stop %s", containerName))
 		client.run(ctx, fmt.Sprintf("docker rm %s", containerName))
 		return fmt.Errorf("healthcheck failed: %w", err)
 	}
+	logf("healthcheck passed")
 
 	// Stop and remove old container.
 	if oldTag != "" {
-		if _, err := client.run(ctx, fmt.Sprintf("docker stop %s-%s", service, oldTag)); err != nil {
+		oldName := fmt.Sprintf("%s-%s", service, oldTag)
+		logf("$ docker stop %s", oldName)
+		if _, err := client.run(ctx, fmt.Sprintf("docker stop %s", oldName)); err != nil {
 			return fmt.Errorf("stopping old container: %w", err)
 		}
-		if _, err := client.run(ctx, fmt.Sprintf("docker rm %s-%s", service, oldTag)); err != nil {
+		logf("$ docker rm %s", oldName)
+		if _, err := client.run(ctx, fmt.Sprintf("docker rm %s", oldName)); err != nil {
 			return fmt.Errorf("removing old container: %w", err)
 		}
+		logf("old container removed")
 	}
 
 	return nil

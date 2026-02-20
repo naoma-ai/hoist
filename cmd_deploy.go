@@ -32,7 +32,8 @@ func addDeployToRoot(cmd *cobra.Command) {
 			return err
 		}
 
-		p, err := newProviders(context.Background(), cfg)
+		ctx := cmd.Context()
+		p, err := newProviders(ctx, cfg)
 		if err != nil {
 			return err
 		}
@@ -44,7 +45,7 @@ func addDeployToRoot(cmd *cobra.Command) {
 			Yes:      yes,
 		}
 
-		return runDeploy(context.Background(), cfg, p, opts)
+		return runDeploy(ctx, cfg, p, opts)
 	}
 }
 

@@ -29,19 +29,21 @@ type staticDeployer struct {
 	cloudfront cfInvalidateAPI
 }
 
-func (d *staticDeployer) deploy(ctx context.Context, service, env, tag, oldTag string) error {
+func (d *staticDeployer) deploy(ctx context.Context, service, env, tag, oldTag string, logf func(string, ...any)) error {
 	ec := d.cfg.Services[service].Env[env]
 	bucket := ec.Bucket
 	distID := ec.CloudFront
 
 	// Write previous-tag marker.
 	if oldTag != "" {
+		logf("writing previous-tag marker (%s) to s3://%s/previous-tag", oldTag, bucket)
 		if err := d.putMarker(ctx, bucket, "previous-tag", oldTag); err != nil {
 			return fmt.Errorf("writing previous-tag marker: %w", err)
 		}
 	}
 
 	// List build objects.
+	logf("listing build objects in s3://%s/builds/%s/", bucket, tag)
 	keys, err := d.listBuildObjects(ctx, bucket, tag)
 	if err != nil {
 		return fmt.Errorf("listing build objects in s3://%s/builds/%s/: %w", bucket, tag, err)
@@ -49,19 +51,24 @@ func (d *staticDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 	if len(keys) == 0 {
 		return fmt.Errorf("build not found: s3://%s/builds/%s/", bucket, tag)
 	}
+	logf("found %d objects", len(keys))
 
 	// Copy build objects to current/.
 	buildPrefix := "builds/" + tag + "/"
+	logf("copying %d objects from builds/%s/ to current/", len(keys), tag)
 	if err := d.copyObjects(ctx, bucket, buildPrefix, "current/", keys); err != nil {
 		return err
 	}
+	logf("objects copied")
 
 	// Write current-tag marker.
+	logf("writing current-tag marker (%s) to s3://%s/current-tag", tag, bucket)
 	if err := d.putMarker(ctx, bucket, "current-tag", tag); err != nil {
 		return fmt.Errorf("writing current-tag marker: %w", err)
 	}
 
 	// Invalidate CloudFront.
+	logf("invalidating CloudFront distribution %s", distID)
 	callerRef := fmt.Sprintf("hoist-%s-%d", tag, time.Now().UnixNano())
 	path := "/*"
 	quantity := int32(1)
@@ -78,6 +85,7 @@ func (d *staticDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 	if err != nil {
 		return fmt.Errorf("invalidating CloudFront %s: %w", distID, err)
 	}
+	logf("CloudFront invalidation created")
 
 	return nil
 }

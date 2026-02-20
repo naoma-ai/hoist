@@ -10,7 +10,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.60.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.55.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
-	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.10.2

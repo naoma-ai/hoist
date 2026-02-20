@@ -80,7 +80,7 @@ func newRollbackCmd() *cobra.Command {
 				return err
 			}
 
-			ctx := context.Background()
+			ctx := cmd.Context()
 			p, err := newProviders(ctx, cfg)
 			if err != nil {
 				return err

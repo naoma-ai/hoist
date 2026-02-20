@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -184,7 +186,7 @@ func TestServerDeployHappyPath(t *testing.T) {
 		pollTimeout:  1 * time.Second,
 	}
 
-	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000")
+	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000", nopLogf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +234,7 @@ func TestServerDeployNoOldTag(t *testing.T) {
 		pollTimeout:  1 * time.Second,
 	}
 
-	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "")
+	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "", nopLogf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -258,7 +260,7 @@ func TestServerDeployPullFailure(t *testing.T) {
 		dial: func(_ string) (sshRunner, error) { return mock, nil },
 	}
 
-	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "old-tag")
+	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "old-tag", nopLogf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -300,7 +302,7 @@ func TestServerDeployHealthcheckFailure(t *testing.T) {
 		pollTimeout:  50 * time.Millisecond,
 	}
 
-	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000")
+	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000", nopLogf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -346,11 +348,50 @@ func TestServerDeployDialFailure(t *testing.T) {
 		},
 	}
 
-	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "old-tag")
+	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "old-tag", nopLogf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "connecting to") {
 		t.Errorf("expected 'connecting to' error, got: %v", err)
+	}
+}
+
+func TestServerDeployLogOutput(t *testing.T) {
+	cfg := testConfig()
+	mock := &mockSSHRunner{}
+
+	d := &serverDeployer{
+		cfg:          cfg,
+		dial:         func(_ string) (sshRunner, error) { return mock, nil },
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  1 * time.Second,
+	}
+
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	logf := newServiceLogf(&buf, &mu, "backend", 8)
+	err := d.deploy(context.Background(), "backend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000", logf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	expected := []string{
+		"connecting to",
+		"docker pull",
+		"image pulled",
+		"docker run",
+		"container started",
+		"waiting for healthcheck",
+		"healthcheck passed",
+		"docker stop",
+		"docker rm",
+		"old container removed",
+	}
+	for _, e := range expected {
+		if !strings.Contains(output, e) {
+			t.Errorf("expected %q in output, got:\n%s", e, output)
+		}
 	}
 }

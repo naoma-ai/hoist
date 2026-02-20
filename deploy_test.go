@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -88,7 +90,7 @@ func (m *mockHistoryProvider) previous(_ context.Context, service, env string) (
 	return d, nil
 }
 
-func (m *mockDeployer) deploy(ctx context.Context, service, env, tag, oldTag string) error {
+func (m *mockDeployer) deploy(ctx context.Context, service, env, tag, oldTag string, logf func(string, ...any)) error {
 	if m.delay > 0 {
 		select {
 		case <-ctx.Done():
@@ -106,6 +108,8 @@ func (m *mockDeployer) deploy(ctx context.Context, service, env, tag, oldTag str
 	}
 	return nil
 }
+
+func nopLogf(string, ...any) {}
 
 func testConfig() config {
 	return config{
@@ -170,6 +174,13 @@ func testProviders(builds []build, deploys map[string]deploy) (providers, *mockD
 	}, md
 }
 
+// testDeployAll is a helper that passes io.Discard for the writer.
+func testDeployAll(ctx context.Context, cfg config, p providers, services []string, env string, tags, previousTags map[string]string) (deployResult, error) {
+	var mu sync.Mutex
+	padLen := maxServiceNameLen(services)
+	return deployAll(ctx, cfg, p, services, env, tags, previousTags, io.Discard, &mu, padLen)
+}
+
 func TestDeployAllHappyPath(t *testing.T) {
 	cfg := testConfig()
 	p, md := testProviders(nil, nil)
@@ -184,7 +195,7 @@ func TestDeployAllHappyPath(t *testing.T) {
 		"backend":  tag,
 		"frontend": tag,
 	}
-	result, err := deployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, previousTags)
+	result, err := testDeployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, previousTags)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -226,7 +237,7 @@ func TestDeployAllPartialFailure(t *testing.T) {
 
 	partialTag := "main-abc1234-20250101000000"
 	tags := map[string]string{"backend": partialTag, "frontend": partialTag}
-	result, err := deployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
+	result, err := testDeployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,7 +258,7 @@ func TestDeployServiceServer(t *testing.T) {
 	cfg := testConfig()
 	p, md := testProviders(nil, nil)
 
-	err := deployService(context.Background(), cfg, p, "backend", "staging", "main-abc1234-20250101000000", "old-tag")
+	err := deployService(context.Background(), cfg, p, "backend", "staging", "main-abc1234-20250101000000", "old-tag", nopLogf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -271,7 +282,7 @@ func TestDeployServiceStatic(t *testing.T) {
 	cfg := testConfig()
 	p, md := testProviders(nil, nil)
 
-	err := deployService(context.Background(), cfg, p, "frontend", "staging", "main-abc1234-20250101000000", "")
+	err := deployService(context.Background(), cfg, p, "frontend", "staging", "main-abc1234-20250101000000", "", nopLogf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -283,7 +294,6 @@ func TestDeployServiceStatic(t *testing.T) {
 		t.Fatalf("expected frontend, got %s", md.calls[0].service)
 	}
 }
-
 
 func TestDeployAllWithPerServiceTags(t *testing.T) {
 	cfg := testConfig()
@@ -299,7 +309,7 @@ func TestDeployAllWithPerServiceTags(t *testing.T) {
 		"frontend": "main-cur2222-20250101000000",
 	}
 
-	result, err := deployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, currentTags)
+	result, err := testDeployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, currentTags)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -428,7 +438,7 @@ func TestRunDeployNonInteractive(t *testing.T) {
 		"backend": "main-old1234-20241231000000",
 	}
 	tags := map[string]string{"backend": tag}
-	result, err := deployAll(context.Background(), cfg, p, []string{"backend"}, "staging", tags, previousTags)
+	result, err := testDeployAll(context.Background(), cfg, p, []string{"backend"}, "staging", tags, previousTags)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -444,14 +454,13 @@ func TestRunDeployNonInteractive(t *testing.T) {
 	}
 }
 
-
 func TestDeployAllMultipleServices(t *testing.T) {
 	cfg := testConfig()
 	p, md := testProviders(nil, nil)
 
 	tag := "main-abc1234-20250101000000"
 	tags := map[string]string{"backend": tag, "frontend": tag}
-	result, err := deployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
+	result, err := testDeployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -569,7 +578,7 @@ func TestDeployAllAllFail(t *testing.T) {
 
 	tag := "main-abc1234-20250101000000"
 	tags := map[string]string{"backend": tag, "frontend": tag}
-	result, err := deployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
+	result, err := testDeployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -620,7 +629,7 @@ func TestDeployAllContextCancellation(t *testing.T) {
 
 	tag := "main-abc1234-20250101000000"
 	tags := map[string]string{"backend": tag, "frontend": tag}
-	result, err := deployAll(ctx, cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
+	result, err := testDeployAll(ctx, cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -715,7 +724,7 @@ func TestDeployAllParallelExecution(t *testing.T) {
 
 	parallelTag := "main-abc1234-20250101000000"
 	parallelTags := map[string]string{"backend": parallelTag, "frontend": parallelTag}
-	result, err := deployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", parallelTags, nil)
+	result, err := testDeployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", parallelTags, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -730,5 +739,145 @@ func TestDeployAllParallelExecution(t *testing.T) {
 	sort.Strings(deployedServices)
 	if len(deployedServices) != 2 || deployedServices[0] != "backend" || deployedServices[1] != "frontend" {
 		t.Fatalf("expected [backend frontend], got %v", deployedServices)
+	}
+}
+
+// --- New tests for log output and helpers ---
+
+func TestNewServiceLogf(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	logf := newServiceLogf(&buf, &mu, "backend", 10)
+	logf("pulling %s", "image:tag")
+	logf("done")
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), buf.String())
+	}
+	if lines[0] != "[backend   ] pulling image:tag" {
+		t.Errorf("unexpected line 0: %q", lines[0])
+	}
+	if lines[1] != "[backend   ] done" {
+		t.Errorf("unexpected line 1: %q", lines[1])
+	}
+}
+
+func TestNewServiceLogfConcurrent(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	logA := newServiceLogf(&buf, &mu, "a", 3)
+	logB := newServiceLogf(&buf, &mu, "bbb", 3)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); logA("msg") }()
+		go func() { defer wg.Done(); logB("msg") }()
+	}
+	wg.Wait()
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 100 {
+		t.Fatalf("expected 100 lines, got %d", len(lines))
+	}
+	for _, line := range lines {
+		if line != "[a  ] msg" && line != "[bbb] msg" {
+			t.Errorf("unexpected line: %q", line)
+		}
+	}
+}
+
+func TestMaxServiceNameLen(t *testing.T) {
+	if n := maxServiceNameLen([]string{"a", "bb", "ccc"}); n != 3 {
+		t.Errorf("expected 3, got %d", n)
+	}
+	if n := maxServiceNameLen(nil); n != 0 {
+		t.Errorf("expected 0, got %d", n)
+	}
+}
+
+func TestPromptRollback(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected rollbackChoice
+	}{
+		{"Y\n", rollbackAll},
+		{"y\n", rollbackAll},
+		{"\n", rollbackAll},
+		{"n\n", rollbackNone},
+		{"N\n", rollbackNone},
+		{"s\n", rollbackFailed},
+		{"S\n", rollbackFailed},
+		{"x\n", rollbackNone},
+	}
+	for _, tc := range tests {
+		r := strings.NewReader(tc.input)
+		got := promptRollback(r)
+		if got != tc.expected {
+			t.Errorf("input %q: expected %d, got %d", tc.input, tc.expected, got)
+		}
+	}
+}
+
+func TestPromptRollbackEOF(t *testing.T) {
+	r := strings.NewReader("")
+	got := promptRollback(r)
+	if got != rollbackNone {
+		t.Errorf("expected rollbackNone on EOF, got %d", got)
+	}
+}
+
+func TestDeployAllLogOutput(t *testing.T) {
+	cfg := testConfig()
+	p, _ := testProviders(nil, nil)
+
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	tag := "main-abc1234-20250101000000"
+	tags := map[string]string{"backend": tag, "frontend": tag}
+
+	_, err := deployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, nil, &buf, &mu, 8)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "[backend ]") {
+		t.Error("expected [backend ] prefix in output")
+	}
+	if !strings.Contains(output, "[frontend]") {
+		t.Error("expected [frontend] prefix in output")
+	}
+	if !strings.Contains(output, "done") {
+		t.Error("expected 'done' in output")
+	}
+}
+
+func TestDeployAllErrorsMap(t *testing.T) {
+	cfg := testConfig()
+	p, md := testProviders(nil, nil)
+	md.errors = map[string]error{
+		"backend": fmt.Errorf("connection refused"),
+	}
+
+	tag := "main-abc1234-20250101000000"
+	tags := map[string]string{"backend": tag, "frontend": tag}
+	result, err := testDeployAll(context.Background(), cfg, p, []string{"backend", "frontend"}, "staging", tags, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.errors == nil {
+		t.Fatal("expected errors map to be populated")
+	}
+	if result.errors["backend"] == nil {
+		t.Fatal("expected error for backend")
+	}
+	if !strings.Contains(result.errors["backend"].Error(), "connection refused") {
+		t.Errorf("expected 'connection refused' in error, got: %v", result.errors["backend"])
+	}
+	if _, ok := result.errors["frontend"]; ok {
+		t.Error("expected no error for frontend")
 	}
 }

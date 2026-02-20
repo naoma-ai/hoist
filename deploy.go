@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +47,7 @@ type buildsProvider interface {
 }
 
 type deployer interface {
-	deploy(ctx context.Context, service, env, tag, oldTag string) error
+	deploy(ctx context.Context, service, env, tag, oldTag string, logf func(string, ...any)) error
 }
 
 type historyProvider interface {
@@ -73,6 +77,54 @@ type deployOpts struct {
 // deployResult holds the outcome of a parallel deploy.
 type deployResult struct {
 	failed []string
+	errors map[string]error
+}
+
+type rollbackChoice int
+
+const (
+	rollbackAll    rollbackChoice = iota
+	rollbackNone
+	rollbackFailed
+)
+
+func newServiceLogf(w io.Writer, mu *sync.Mutex, service string, padLen int) func(string, ...any) {
+	prefix := fmt.Sprintf("[%-*s]", padLen, service)
+	return func(format string, args ...any) {
+		msg := fmt.Sprintf(format, args...)
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprintf(w, "%s %s\n", prefix, msg)
+	}
+}
+
+func maxServiceNameLen(services []string) int {
+	n := 0
+	for _, s := range services {
+		if len(s) > n {
+			n = len(s)
+		}
+	}
+	return n
+}
+
+func promptRollback(r io.Reader) rollbackChoice {
+	fmt.Print("Rollback? [Y/n/s] (Y=all, n=leave, s=failed only) ")
+	scanner := bufio.NewScanner(r)
+	if !scanner.Scan() {
+		return rollbackNone
+	}
+	line := strings.TrimSpace(scanner.Text())
+	switch {
+	case line == "" || line == "Y" || line == "y":
+		return rollbackAll
+	case line == "n" || line == "N":
+		return rollbackNone
+	case line == "s" || line == "S":
+		return rollbackFailed
+	default:
+		return rollbackNone
+	}
 }
 
 func runDeploy(ctx context.Context, cfg config, p providers, opts deployOpts) error {
@@ -215,64 +267,39 @@ func runDeploy(ctx context.Context, cfg config, p providers, opts deployOpts) er
 		}
 	}
 
-	return deployAllWithUI(ctx, cfg, p, services, env, tags, previousTags)
+	return deployAllWithLog(ctx, cfg, p, services, env, tags, previousTags, os.Stdout, os.Stdin)
 }
 
-// deployAllWithUI runs parallel deploys with TUI progress display.
-// tags maps each service to the tag it should be deployed to.
-func deployAllWithUI(ctx context.Context, cfg config, p providers, services []string, env string, tags map[string]string, previousTags map[string]string) error {
-	deployCtx, cancelDeploy := context.WithCancel(ctx)
-	defer cancelDeploy()
+// deployAllWithLog runs parallel deploys with plain log output.
+func deployAllWithLog(ctx context.Context, cfg config, p providers, services []string, env string, tags map[string]string, previousTags map[string]string, w io.Writer, promptIn io.Reader) error {
+	padLen := maxServiceNameLen(services)
+	var mu sync.Mutex
 
-	dm := newDeployModel(services)
-	prog := tea.NewProgram(dm)
-
-	var wg sync.WaitGroup
-	for _, svc := range services {
-		wg.Add(1)
-		go func(svc string) {
-			defer wg.Done()
-			oldTag := previousTags[svc]
-			err := deployService(deployCtx, cfg, p, svc, env, tags[svc], oldTag)
-			prog.Send(serviceStatusMsg{service: svc, err: err})
-		}(svc)
-	}
-
-	finalModel, err := prog.Run()
+	result, err := deployAll(ctx, cfg, p, services, env, tags, previousTags, w, &mu, padLen)
 	if err != nil {
-		cancelDeploy()
-		wg.Wait()
-		return fmt.Errorf("deploy UI: %w", err)
+		return err
 	}
 
-	dm = finalModel.(deployModel)
-
-	// ctrl+c during deploying phase: cancel context and wait for goroutines
-	if dm.phase == phaseDeploying {
-		cancelDeploy()
-		wg.Wait()
-		return errCancelled
-	}
-
-	wg.Wait()
-
-	// Print full errors after TUI exits (TUI truncates to terminal width).
-	for _, svc := range dm.failed {
-		if status := dm.results[svc]; status != nil && status.err != nil {
-			fmt.Printf("\n--- %s ---\n%v\n", svc, status.err)
-		}
-	}
-
-	if dm.phase == phaseComplete {
+	if len(result.failed) == 0 {
+		fmt.Fprintln(w, "Deploy complete!")
 		return nil
 	}
 
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Deploy failed!")
+	for _, svc := range result.failed {
+		fmt.Fprintf(w, "  %s: %v\n", svc, result.errors[svc])
+	}
+	fmt.Fprintln(w)
+
+	choice := promptRollback(promptIn)
+
 	var rollbackServices []string
-	switch dm.rollback {
+	switch choice {
 	case rollbackAll:
 		rollbackServices = services
 	case rollbackFailed:
-		rollbackServices = dm.failed
+		rollbackServices = result.failed
 	case rollbackNone:
 		return nil
 	}
@@ -282,11 +309,11 @@ func deployAllWithUI(ctx context.Context, cfg config, p providers, services []st
 		if prev, ok := previousTags[svc]; ok && prev != "" {
 			rollbackTags[svc] = prev
 		} else {
-			fmt.Printf("skipping %s: no previous deploy\n", svc)
+			fmt.Fprintf(w, "skipping %s: no previous deploy\n", svc)
 		}
 	}
 	if len(rollbackTags) == 0 {
-		fmt.Println("Nothing to roll back.")
+		fmt.Fprintln(w, "Nothing to roll back.")
 		return nil
 	}
 
@@ -295,21 +322,20 @@ func deployAllWithUI(ctx context.Context, cfg config, p providers, services []st
 		rollbackTargets = append(rollbackTargets, svc)
 	}
 
-	fmt.Printf("Rolling back %d service(s)...\n", len(rollbackTargets))
-	result, err := deployAll(ctx, cfg, p, rollbackTargets, env, rollbackTags, tags)
+	fmt.Fprintf(w, "Rolling back %d service(s)...\n", len(rollbackTargets))
+	rbResult, err := deployAll(ctx, cfg, p, rollbackTargets, env, rollbackTags, tags, w, &mu, padLen)
 	if err != nil {
 		return fmt.Errorf("rollback: %w", err)
 	}
-	if len(result.failed) > 0 {
-		return fmt.Errorf("rollback failed for: %v", result.failed)
+	if len(rbResult.failed) > 0 {
+		return fmt.Errorf("rollback failed for: %v", rbResult.failed)
 	}
-	fmt.Println("Rollback complete.")
+	fmt.Fprintln(w, "Rollback complete.")
 	return nil
 }
 
-// deployAll runs parallel deploys without TUI. Returns results for the caller to handle.
-// tags maps each service to the tag it should be deployed to.
-func deployAll(ctx context.Context, cfg config, p providers, services []string, env string, tags map[string]string, previousTags map[string]string) (deployResult, error) {
+// deployAll runs parallel deploys with log output. Returns results for the caller to handle.
+func deployAll(ctx context.Context, cfg config, p providers, services []string, env string, tags map[string]string, previousTags map[string]string, w io.Writer, mu *sync.Mutex, padLen int) (deployResult, error) {
 	type result struct {
 		service string
 		err     error
@@ -322,8 +348,15 @@ func deployAll(ctx context.Context, cfg config, p providers, services []string, 
 		wg.Add(1)
 		go func(svc string) {
 			defer wg.Done()
+			logf := newServiceLogf(w, mu, svc, padLen)
 			oldTag := previousTags[svc]
-			err := deployService(ctx, cfg, p, svc, env, tags[svc], oldTag)
+			logf("deploying %s -> %s (env=%s)", oldTag, tags[svc], env)
+			err := deployService(ctx, cfg, p, svc, env, tags[svc], oldTag, logf)
+			if err != nil {
+				logf("FAILED: %v", err)
+			} else {
+				logf("done")
+			}
 			results <- result{service: svc, err: err}
 		}(svc)
 	}
@@ -332,18 +365,18 @@ func deployAll(ctx context.Context, cfg config, p providers, services []string, 
 	close(results)
 
 	var failed []string
+	errs := make(map[string]error)
 	for r := range results {
 		if r.err != nil {
 			failed = append(failed, r.service)
+			errs[r.service] = r.err
 		}
 	}
 
-	return deployResult{
-		failed: failed,
-	}, nil
+	return deployResult{failed: failed, errors: errs}, nil
 }
 
-func deployService(ctx context.Context, cfg config, p providers, service, env, tag, oldTag string) error {
+func deployService(ctx context.Context, cfg config, p providers, service, env, tag, oldTag string, logf func(string, ...any)) error {
 	svc := cfg.Services[service]
 
 	d, ok := p.deployers[svc.Type]
@@ -351,7 +384,7 @@ func deployService(ctx context.Context, cfg config, p providers, service, env, t
 		return fmt.Errorf("no deployer for service type %q", svc.Type)
 	}
 
-	return d.deploy(ctx, service, env, tag, oldTag)
+	return d.deploy(ctx, service, env, tag, oldTag, logf)
 }
 
 
