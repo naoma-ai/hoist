@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -24,11 +23,12 @@ func newStatusCmd() *cobra.Command {
 				return err
 			}
 
-			p, err := newProviders(context.Background(), cfg)
+			ctx := cmd.Context()
+			p, err := newProviders(ctx, cfg)
 			if err != nil {
 				return err
 			}
-			rows, err := getStatus(context.Background(), cfg, p, env)
+			rows, err := getStatus(ctx, cfg, p, env)
 			if err != nil {
 				return err
 			}

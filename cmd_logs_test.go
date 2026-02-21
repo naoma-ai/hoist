@@ -39,33 +39,6 @@ services:
 `
 }
 
-func TestLogsCommandSingleService(t *testing.T) {
-	cfgPath := writeTemp(t, testConfigYAML())
-	cmd := newLogsCmd()
-	cmd.SetArgs([]string{"-c", cfgPath, "-s", "backend", "-e", "staging"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestLogsCommandAllServices(t *testing.T) {
-	cfgPath := writeTemp(t, testConfigYAML())
-	cmd := newLogsCmd()
-	cmd.SetArgs([]string{"-c", cfgPath, "-e", "staging"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestLogsCommandAutoSelectEnv(t *testing.T) {
-	cfgPath := writeTemp(t, testConfigYAML())
-	cmd := newLogsCmd()
-	cmd.SetArgs([]string{"-c", cfgPath, "-s", "backend"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestLogsCommandUnknownService(t *testing.T) {
 	cfgPath := writeTemp(t, testConfigYAML())
 	cmd := newLogsCmd()

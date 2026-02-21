@@ -85,8 +85,11 @@ func newProviders(ctx context.Context, cfg config) (providers, error) {
 			"static": &staticHistoryProvider{cfg: cfg, s3: s3Client},
 		},
 		logs: map[string]logsProvider{
-			"server": &serverLogsProvider{cfg: cfg},
-			"static": &staticLogsProvider{cfg: cfg},
+			"server": &serverLogsProvider{
+				cfg:  cfg,
+				dial: func(addr string) (sshRunner, error) { return sshDial(addr) },
+			},
+			"static": &staticLogsProvider{},
 		},
 	}, nil
 }

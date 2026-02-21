@@ -1,8 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"sync"
 
@@ -29,16 +30,23 @@ func newLogsCmd() *cobra.Command {
 				return err
 			}
 
-			ctx := context.Background()
+			ctx := cmd.Context()
 			p, err := newProviders(ctx, cfg)
 			if err != nil {
 				return err
 			}
 
-			// Default to all services
+			// Default to server services (static services have no tailable logs)
 			targets := services
 			if len(targets) == 0 {
-				targets = sortedServiceNames(cfg)
+				for _, name := range sortedServiceNames(cfg) {
+					if cfg.Services[name].Type != "static" {
+						targets = append(targets, name)
+					}
+				}
+				if len(targets) == 0 {
+					return fmt.Errorf("no services with tailable logs")
+				}
 			}
 
 			// Validate services exist
@@ -74,6 +82,7 @@ func newLogsCmd() *cobra.Command {
 			}
 
 			// Run log tailing concurrently for all services
+			padLen := maxServiceNameLen(targets)
 			var wg sync.WaitGroup
 			errs := make(chan error, len(targets))
 			for _, svc := range targets {
@@ -82,8 +91,21 @@ func newLogsCmd() *cobra.Command {
 					defer wg.Done()
 					svcCfg := cfg.Services[svc]
 					lp := p.logs[svcCfg.Type]
-					if err := lp.tail(ctx, svc, env, n, since); err != nil {
+					w := os.Stdout
+					var pw *linePrefixWriter
+					if len(targets) > 1 {
+						prefix := fmt.Sprintf("[%-*s]", padLen, svc)
+						pw = newLinePrefixWriter(w, prefix)
+					}
+					var dest io.Writer = w
+					if pw != nil {
+						dest = pw
+					}
+					if err := lp.tail(ctx, svc, env, n, since, dest); err != nil {
 						errs <- fmt.Errorf("tailing logs for %s: %w", svc, err)
+					}
+					if pw != nil {
+						pw.Flush()
 					}
 				}(svc)
 			}

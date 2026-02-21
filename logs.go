@@ -1,6 +1,52 @@
 package main
 
-import "strconv"
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"strconv"
+)
+
+// linePrefixWriter wraps a writer and prepends a prefix to each line.
+// It buffers partial lines until a newline is seen.
+type linePrefixWriter struct {
+	w      io.Writer
+	prefix string
+	buf    []byte
+}
+
+func newLinePrefixWriter(w io.Writer, prefix string) *linePrefixWriter {
+	return &linePrefixWriter{w: w, prefix: prefix}
+}
+
+func (w *linePrefixWriter) Write(p []byte) (int, error) {
+	total := len(p)
+	w.buf = append(w.buf, p...)
+
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		line := w.buf[:i+1]
+		if _, err := fmt.Fprintf(w.w, "%s %s", w.prefix, line); err != nil {
+			return 0, err
+		}
+		w.buf = w.buf[i+1:]
+	}
+
+	return total, nil
+}
+
+// Flush writes any remaining buffered content (partial line without trailing newline).
+func (w *linePrefixWriter) Flush() error {
+	if len(w.buf) > 0 {
+		_, err := fmt.Fprintf(w.w, "%s %s\n", w.prefix, w.buf)
+		w.buf = nil
+		return err
+	}
+	return nil
+}
 
 func dockerLogsArgs(container, since string, n int, follow bool) []string {
 	args := []string{"logs"}

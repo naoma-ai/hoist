@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 )
 
 type sshRunner interface {
 	run(ctx context.Context, cmd string) (string, error)
+	stream(ctx context.Context, cmd string, stdout io.Writer) error
 	close() error
 }
 

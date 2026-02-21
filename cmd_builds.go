@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -27,7 +26,8 @@ func newBuildsCmd() *cobra.Command {
 				return err
 			}
 
-			p, err := newProviders(context.Background(), cfg)
+			ctx := cmd.Context()
+			p, err := newProviders(ctx, cfg)
 			if err != nil {
 				return err
 			}
@@ -45,7 +45,7 @@ func newBuildsCmd() *cobra.Command {
 				return fmt.Errorf("no builds provider available")
 			}
 
-			builds, err := bp.listBuilds(context.Background(), limit+1, 0)
+			builds, err := bp.listBuilds(ctx, limit+1, 0)
 			if err != nil {
 				return fmt.Errorf("listing builds: %w", err)
 			}

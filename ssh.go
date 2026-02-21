@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -96,6 +97,37 @@ func (c *sshClient) run(ctx context.Context, cmd string) (string, error) {
 	}
 
 	return strings.TrimRight(stdout.String(), "\n"), nil
+}
+
+func (c *sshClient) stream(ctx context.Context, cmd string, stdout io.Writer) error {
+	session, err := c.client.NewSession()
+	if err != nil {
+		return fmt.Errorf("creating SSH session: %w", err)
+	}
+	defer session.Close()
+
+	session.Stdout = stdout
+	session.Stderr = stdout
+
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			session.Signal(ssh.SIGTERM)
+		case <-done:
+		}
+	}()
+
+	err = session.Run(cmd)
+	close(done)
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return fmt.Errorf("running %q: %w", cmd, err)
+	}
+	return nil
 }
 
 func (c *sshClient) close() error {

@@ -56,7 +56,7 @@ type historyProvider interface {
 }
 
 type logsProvider interface {
-	tail(ctx context.Context, service, env string, n int, since string) error
+	tail(ctx context.Context, service, env string, n int, since string, w io.Writer) error
 }
 
 type providers struct {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,23 @@ func (m *mockSSHRunner) run(_ context.Context, cmd string) (string, error) {
 	}
 	m.idx++
 	return "", nil
+}
+
+func (m *mockSSHRunner) stream(_ context.Context, cmd string, stdout io.Writer) error {
+	m.commands = append(m.commands, cmd)
+	if m.idx < len(m.responses) {
+		r := m.responses[m.idx]
+		m.idx++
+		if r.err != nil {
+			return r.err
+		}
+		if r.output != "" {
+			stdout.Write([]byte(r.output))
+		}
+		return nil
+	}
+	m.idx++
+	return nil
 }
 
 func (m *mockSSHRunner) close() error { return nil }
