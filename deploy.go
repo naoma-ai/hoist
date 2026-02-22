@@ -277,13 +277,19 @@ func deployAllWithLog(ctx context.Context, cfg config, p providers, services []s
 	padLen := maxServiceNameLen(services)
 	var mu sync.Mutex
 
+	start := time.Now()
 	result, err := deployAll(ctx, cfg, p, services, env, tags, previousTags, w, &mu, padLen)
 	if err != nil {
 		return err
 	}
+	duration := time.Since(start)
 
 	if len(result.failed) == 0 {
 		fmt.Fprintln(w, "Deploy complete!")
+		if cfg.Hooks.PostDeploy != "" {
+			event := buildDeployEvent(cfg.Project, env, services, tags, previousTags, result, duration, false)
+			go firePostDeployHook(cfg.Hooks.PostDeploy, event)
+		}
 		return nil
 	}
 
@@ -293,6 +299,11 @@ func deployAllWithLog(ctx context.Context, cfg config, p providers, services []s
 		fmt.Fprintf(w, "  %s: %v\n", svc, result.errors[svc])
 	}
 	fmt.Fprintln(w)
+
+	if cfg.Hooks.PostDeploy != "" {
+		event := buildDeployEvent(cfg.Project, env, services, tags, previousTags, result, duration, false)
+		go firePostDeployHook(cfg.Hooks.PostDeploy, event)
+	}
 
 	choice := promptRollback(promptIn)
 
@@ -325,6 +336,7 @@ func deployAllWithLog(ctx context.Context, cfg config, p providers, services []s
 	}
 
 	fmt.Fprintf(w, "Rolling back %d service(s)...\n", len(rollbackTargets))
+	rbStart := time.Now()
 	rbResult, err := deployAll(ctx, cfg, p, rollbackTargets, env, rollbackTags, tags, w, &mu, padLen)
 	if err != nil {
 		return fmt.Errorf("rollback: %w", err)
@@ -333,6 +345,13 @@ func deployAllWithLog(ctx context.Context, cfg config, p providers, services []s
 		return fmt.Errorf("rollback failed for: %v", rbResult.failed)
 	}
 	fmt.Fprintln(w, "Rollback complete.")
+
+	if cfg.Hooks.PostDeploy != "" {
+		rbDuration := time.Since(rbStart)
+		event := buildDeployEvent(cfg.Project, env, rollbackTargets, rollbackTags, tags, rbResult, rbDuration, true)
+		go firePostDeployHook(cfg.Hooks.PostDeploy, event)
+	}
+
 	return nil
 }
 

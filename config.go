@@ -11,6 +11,11 @@ type config struct {
 	Project  string                   `yaml:"project"`
 	Nodes    map[string]string        `yaml:"nodes"`
 	Services map[string]serviceConfig `yaml:"services"`
+	Hooks    hooksConfig              `yaml:"hooks"`
+}
+
+type hooksConfig struct {
+	PostDeploy string `yaml:"post_deploy"`
 }
 
 type serviceConfig struct {

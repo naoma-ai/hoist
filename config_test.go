@@ -27,6 +27,9 @@ nodes:
   prod1: 10.0.0.1
   staging1: 10.0.0.2
 
+hooks:
+  post_deploy: http://hooks.internal/deploy
+
 services:
   api:
     type: server
@@ -62,6 +65,9 @@ services:
 		Nodes: map[string]string{
 			"prod1":    "10.0.0.1",
 			"staging1": "10.0.0.2",
+		},
+		Hooks: hooksConfig{
+			PostDeploy: "http://hooks.internal/deploy",
 		},
 		Services: map[string]serviceConfig{
 			"api": {
