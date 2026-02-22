@@ -129,32 +129,9 @@ func promptRollback(r io.Reader) rollbackChoice {
 }
 
 func runDeploy(ctx context.Context, cfg config, p providers, opts deployOpts) error {
-	services := opts.Services
-	if len(services) == 0 {
-		names := sortedServiceNames(cfg)
-		result, err := tea.NewProgram(newMultiSelectModel("Select services to deploy:", names)).Run()
-		if err != nil {
-			return err
-		}
-		m := result.(multiSelectModel)
-		if m.cancelled {
-			return errCancelled
-		}
-		services = m.chosen()
-	}
-
-	for _, svc := range services {
-		if _, ok := cfg.Services[svc]; !ok {
-			return fmt.Errorf("unknown service: %q", svc)
-		}
-	}
-
 	env := opts.Env
 	if env == "" {
-		envs := envIntersection(cfg, services)
-		if len(envs) == 0 {
-			return fmt.Errorf("no common environments across selected services")
-		}
+		envs := allEnvironments(cfg)
 		if len(envs) == 1 {
 			env = envs[0]
 		} else {
@@ -170,7 +147,31 @@ func runDeploy(ctx context.Context, cfg config, p providers, opts deployOpts) er
 		}
 	}
 
+	services := opts.Services
+	if len(services) == 0 {
+		names := servicesWithEnv(cfg, env)
+		if len(names) == 0 {
+			return fmt.Errorf("no services have environment %q", env)
+		}
+		if len(names) == 1 {
+			services = names
+		} else {
+			result, err := tea.NewProgram(newMultiSelectModel("Select services to deploy:", names)).Run()
+			if err != nil {
+				return err
+			}
+			m := result.(multiSelectModel)
+			if m.cancelled {
+				return errCancelled
+			}
+			services = m.chosen()
+		}
+	}
+
 	for _, svc := range services {
+		if _, ok := cfg.Services[svc]; !ok {
+			return fmt.Errorf("unknown service: %q", svc)
+		}
 		if _, ok := cfg.Services[svc].Env[env]; !ok {
 			return fmt.Errorf("service %q has no environment %q", svc, env)
 		}
@@ -416,6 +417,32 @@ func sortedServiceNames(cfg config) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func allEnvironments(cfg config) []string {
+	seen := make(map[string]bool)
+	for _, svc := range cfg.Services {
+		for env := range svc.Env {
+			seen[env] = true
+		}
+	}
+	var result []string
+	for env := range seen {
+		result = append(result, env)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func servicesWithEnv(cfg config, env string) []string {
+	var result []string
+	for name, svc := range cfg.Services {
+		if _, ok := svc.Env[env]; ok {
+			result = append(result, name)
+		}
+	}
+	sort.Strings(result)
+	return result
 }
 
 func envIntersection(cfg config, services []string) []string {

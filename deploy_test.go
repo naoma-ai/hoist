@@ -395,6 +395,69 @@ func TestResolveBuildTagUnknownBranch(t *testing.T) {
 	}
 }
 
+func TestAllEnvironments(t *testing.T) {
+	cfg := testConfig()
+	envs := allEnvironments(cfg)
+	if len(envs) != 2 {
+		t.Fatalf("expected 2 envs, got %d: %v", len(envs), envs)
+	}
+	if envs[0] != "production" || envs[1] != "staging" {
+		t.Fatalf("expected [production staging], got %v", envs)
+	}
+}
+
+func TestAllEnvironmentsMixed(t *testing.T) {
+	cfg := config{
+		Services: map[string]serviceConfig{
+			"a": {Env: map[string]envConfig{"staging": {}}},
+			"b": {Env: map[string]envConfig{"production": {}}},
+		},
+	}
+	envs := allEnvironments(cfg)
+	if len(envs) != 2 {
+		t.Fatalf("expected 2 envs, got %d: %v", len(envs), envs)
+	}
+	if envs[0] != "production" || envs[1] != "staging" {
+		t.Fatalf("expected [production staging], got %v", envs)
+	}
+}
+
+func TestServicesWithEnv(t *testing.T) {
+	cfg := testConfig()
+	services := servicesWithEnv(cfg, "staging")
+	if len(services) != 3 {
+		t.Fatalf("expected 3 services, got %d: %v", len(services), services)
+	}
+	if services[0] != "backend" || services[1] != "frontend" || services[2] != "report" {
+		t.Fatalf("expected [backend frontend report], got %v", services)
+	}
+}
+
+func TestServicesWithEnvPartial(t *testing.T) {
+	cfg := config{
+		Services: map[string]serviceConfig{
+			"a": {Env: map[string]envConfig{"staging": {}}},
+			"b": {Env: map[string]envConfig{"production": {}}},
+			"c": {Env: map[string]envConfig{"staging": {}, "production": {}}},
+		},
+	}
+	services := servicesWithEnv(cfg, "staging")
+	if len(services) != 2 {
+		t.Fatalf("expected 2 services, got %d: %v", len(services), services)
+	}
+	if services[0] != "a" || services[1] != "c" {
+		t.Fatalf("expected [a c], got %v", services)
+	}
+}
+
+func TestServicesWithEnvNone(t *testing.T) {
+	cfg := testConfig()
+	services := servicesWithEnv(cfg, "nonexistent")
+	if len(services) != 0 {
+		t.Fatalf("expected 0 services, got %d: %v", len(services), services)
+	}
+}
+
 func TestEnvIntersection(t *testing.T) {
 	cfg := testConfig()
 
@@ -526,34 +589,20 @@ func TestRunDeployEnvNotFound(t *testing.T) {
 	}
 }
 
-func TestRunDeployNoCommonEnvs(t *testing.T) {
-	cfg := config{
-		Nodes: map[string]string{"n1": "10.0.0.1"},
-		Services: map[string]serviceConfig{
-			"a": {
-				Type: "server", Image: "a", Port: 8080, Healthcheck: "/h",
-				Env: map[string]envConfig{
-					"staging": {Node: "n1", Host: "a.com", EnvFile: ".env"},
-				},
-			},
-			"b": {
-				Type: "server", Image: "b", Port: 8080, Healthcheck: "/h",
-				Env: map[string]envConfig{
-					"production": {Node: "n1", Host: "b.com", EnvFile: ".env"},
-				},
-			},
-		},
-	}
+func TestRunDeployServiceHasNoEnv(t *testing.T) {
+	cfg := testConfig()
 	p, _ := testProviders(nil, nil)
 
+	// backend has staging+production, but "nonexistent" doesn't exist
 	err := runDeploy(context.Background(), cfg, p, deployOpts{
-		Services: []string{"a", "b"},
+		Services: []string{"backend"},
+		Env:      "nonexistent",
 	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "no common environments") {
-		t.Errorf("expected 'no common environments' error, got: %v", err)
+	if !strings.Contains(err.Error(), "has no environment") {
+		t.Errorf("expected 'has no environment' error, got: %v", err)
 	}
 }
 
