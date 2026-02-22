@@ -31,27 +31,31 @@ func (d *cronjobDeployer) deploy(ctx context.Context, service, env, tag, oldTag 
 	}
 	logf("image pulled")
 
-	// Read existing cronfile to get current tag (becomes previous).
+	// Read existing crontab.
+	blockID := service + "-" + env
+	crontab, _ := client.run(ctx, "crontab -l 2>/dev/null")
+
+	// Determine previous tag.
 	previous := oldTag
 	if previous == "" {
-		catCmd := fmt.Sprintf("cat %s 2>/dev/null", ec.Cronfile)
-		out, err := client.run(ctx, catCmd)
-		if err == nil && out != "" {
-			previous = parseCronfileTag(out, "tag")
+		block := extractCrontabBlock(crontab, blockID)
+		if block != "" {
+			previous = parseCronfileTag(block, "tag")
 		}
 	}
 
-	// Build the cron line.
+	// Build the new block.
 	cronLine := buildCronLine(d.cfg.Project, service, env, tag, svc, ec)
+	newBlock := fmt.Sprintf("# hoist:begin %s\n# hoist:tag=%s\n# hoist:previous=%s\n%s\n# hoist:end %s", blockID, tag, previous, cronLine, blockID)
+	crontab = replaceCrontabBlock(crontab, blockID, newBlock)
 
-	// Write cronfile.
-	content := fmt.Sprintf("# hoist:tag=%s\n# hoist:previous=%s\n%s\n", tag, previous, cronLine)
-	writeCmd := fmt.Sprintf("printf '%%s' %s > %s", shellQuote(content), ec.Cronfile)
-	logf("writing cronfile %s", ec.Cronfile)
+	// Write crontab.
+	writeCmd := fmt.Sprintf("printf '%%s' %s | crontab -", shellQuote(crontab))
+	logf("writing crontab entry %s", blockID)
 	if _, err := client.run(ctx, writeCmd); err != nil {
-		return fmt.Errorf("writing cronfile: %w", err)
+		return fmt.Errorf("writing crontab: %w", err)
 	}
-	logf("cronfile written")
+	logf("crontab updated")
 
 	return nil
 }
@@ -61,7 +65,6 @@ func buildCronLine(project, service, env, tag string, svc serviceConfig, ec envC
 
 	var parts []string
 	parts = append(parts, svc.Schedule)
-	parts = append(parts, "root")
 	parts = append(parts, fmt.Sprintf("docker rm -f %s 2>/dev/null;", containerName))
 
 	runArgs := []string{
@@ -98,4 +101,69 @@ func parseCronfileTag(content, key string) string {
 // shellQuote wraps a string in single quotes for safe shell use.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// extractCrontabBlock returns the content between the begin/end markers for blockID,
+// or empty string if not found.
+func extractCrontabBlock(crontab, blockID string) string {
+	beginMarker := "# hoist:begin " + blockID
+	endMarker := "# hoist:end " + blockID
+
+	lines := strings.Split(crontab, "\n")
+	var block []string
+	inside := false
+	for _, line := range lines {
+		if line == beginMarker {
+			inside = true
+			continue
+		}
+		if line == endMarker {
+			break
+		}
+		if inside {
+			block = append(block, line)
+		}
+	}
+	if !inside {
+		return ""
+	}
+	return strings.Join(block, "\n")
+}
+
+// replaceCrontabBlock replaces the block for blockID in the crontab, or appends it
+// if no existing block is found. Returns the updated crontab content.
+func replaceCrontabBlock(crontab, blockID, newBlock string) string {
+	beginMarker := "# hoist:begin " + blockID
+	endMarker := "# hoist:end " + blockID
+
+	lines := strings.Split(crontab, "\n")
+	var result []string
+	replaced := false
+	inside := false
+	for _, line := range lines {
+		if line == beginMarker {
+			inside = true
+			result = append(result, strings.Split(newBlock, "\n")...)
+			replaced = true
+			continue
+		}
+		if inside && line == endMarker {
+			inside = false
+			continue
+		}
+		if !inside {
+			result = append(result, line)
+		}
+	}
+
+	if !replaced {
+		// Append to the end. Ensure there's a newline separator.
+		trimmed := strings.TrimRight(strings.Join(result, "\n"), "\n")
+		if trimmed == "" {
+			return newBlock + "\n"
+		}
+		return trimmed + "\n" + newBlock + "\n"
+	}
+
+	return strings.Join(result, "\n")
 }

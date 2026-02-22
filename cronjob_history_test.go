@@ -11,7 +11,7 @@ import (
 func TestCronjobHistoryCurrentWithContainer(t *testing.T) {
 	cfg := cronjobTestConfig()
 
-	cronfileContent := "# hoist:tag=main-abc1234-20250101000000\n# hoist:previous=main-old1234-20241231000000\n0 0 * * * root docker run ...\n"
+	crontabContent := "# hoist:begin report-prod\n# hoist:tag=main-abc1234-20250101000000\n# hoist:previous=main-old1234-20241231000000\n0 0 * * * docker run ...\n# hoist:end report-prod\n"
 	finishedAt := time.Now().Add(-2 * time.Hour).Format(time.RFC3339Nano)
 
 	calls := 0
@@ -19,8 +19,8 @@ func TestCronjobHistoryCurrentWithContainer(t *testing.T) {
 		cfg: cfg,
 		run: func(_ context.Context, addr, cmd string) (string, error) {
 			calls++
-			if strings.Contains(cmd, "cat") {
-				return cronfileContent, nil
+			if strings.Contains(cmd, "crontab -l") {
+				return crontabContent, nil
 			}
 			if strings.Contains(cmd, "docker inspect") {
 				return fmt.Sprintf("%s\t0", finishedAt), nil
@@ -51,13 +51,13 @@ func TestCronjobHistoryCurrentWithContainer(t *testing.T) {
 func TestCronjobHistoryCurrentNoContainer(t *testing.T) {
 	cfg := cronjobTestConfig()
 
-	cronfileContent := "# hoist:tag=main-abc1234-20250101000000\n# hoist:previous=\n0 0 * * * root docker run ...\n"
+	crontabContent := "# hoist:begin report-prod\n# hoist:tag=main-abc1234-20250101000000\n# hoist:previous=\n0 0 * * * docker run ...\n# hoist:end report-prod\n"
 
 	p := &cronjobHistoryProvider{
 		cfg: cfg,
 		run: func(_ context.Context, addr, cmd string) (string, error) {
-			if strings.Contains(cmd, "cat") {
-				return cronfileContent, nil
+			if strings.Contains(cmd, "crontab -l") {
+				return crontabContent, nil
 			}
 			if strings.Contains(cmd, "docker inspect") {
 				return "", fmt.Errorf("no such container")
@@ -79,13 +79,13 @@ func TestCronjobHistoryCurrentNoContainer(t *testing.T) {
 	}
 }
 
-func TestCronjobHistoryCurrentNoCronfile(t *testing.T) {
+func TestCronjobHistoryCurrentNoCrontab(t *testing.T) {
 	cfg := cronjobTestConfig()
 
 	p := &cronjobHistoryProvider{
 		cfg: cfg,
 		run: func(_ context.Context, addr, cmd string) (string, error) {
-			return "", fmt.Errorf("no such file")
+			return "", fmt.Errorf("no crontab for user")
 		},
 	}
 
@@ -98,6 +98,31 @@ func TestCronjobHistoryCurrentNoCronfile(t *testing.T) {
 	}
 }
 
+func TestCronjobHistoryCurrentNoBlock(t *testing.T) {
+	cfg := cronjobTestConfig()
+
+	// Crontab exists but has no block for report-prod.
+	crontabContent := "# hoist:begin other-prod\n# hoist:tag=other-tag\n0 * * * * docker run other\n# hoist:end other-prod\n"
+
+	p := &cronjobHistoryProvider{
+		cfg: cfg,
+		run: func(_ context.Context, addr, cmd string) (string, error) {
+			if strings.Contains(cmd, "crontab -l") {
+				return crontabContent, nil
+			}
+			return "", fmt.Errorf("unexpected command: %s", cmd)
+		},
+	}
+
+	d, err := p.current(context.Background(), "report", "prod")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.Tag != "" {
+		t.Errorf("expected empty tag when block not found, got %q", d.Tag)
+	}
+}
+
 func TestCronjobHistoryCurrentNonZeroExit(t *testing.T) {
 	cfg := cronjobTestConfig()
 	finishedAt := time.Now().Add(-30 * time.Minute).Format(time.RFC3339Nano)
@@ -105,8 +130,8 @@ func TestCronjobHistoryCurrentNonZeroExit(t *testing.T) {
 	p := &cronjobHistoryProvider{
 		cfg: cfg,
 		run: func(_ context.Context, addr, cmd string) (string, error) {
-			if strings.Contains(cmd, "cat") {
-				return "# hoist:tag=main-abc1234-20250101000000\n", nil
+			if strings.Contains(cmd, "crontab -l") {
+				return "# hoist:begin report-prod\n# hoist:tag=main-abc1234-20250101000000\n# hoist:end report-prod\n", nil
 			}
 			if strings.Contains(cmd, "docker inspect") {
 				return fmt.Sprintf("%s\t1", finishedAt), nil
@@ -130,7 +155,7 @@ func TestCronjobHistoryPrevious(t *testing.T) {
 	p := &cronjobHistoryProvider{
 		cfg: cfg,
 		run: func(_ context.Context, addr, cmd string) (string, error) {
-			return "# hoist:tag=main-abc1234-20250101000000\n# hoist:previous=main-old1234-20241231000000\n", nil
+			return "# hoist:begin report-prod\n# hoist:tag=main-abc1234-20250101000000\n# hoist:previous=main-old1234-20241231000000\n# hoist:end report-prod\n", nil
 		},
 	}
 
@@ -143,13 +168,13 @@ func TestCronjobHistoryPrevious(t *testing.T) {
 	}
 }
 
-func TestCronjobHistoryPreviousNoCronfile(t *testing.T) {
+func TestCronjobHistoryPreviousNoCrontab(t *testing.T) {
 	cfg := cronjobTestConfig()
 
 	p := &cronjobHistoryProvider{
 		cfg: cfg,
 		run: func(_ context.Context, addr, cmd string) (string, error) {
-			return "", fmt.Errorf("no such file")
+			return "", fmt.Errorf("no crontab for user")
 		},
 	}
 
@@ -159,6 +184,25 @@ func TestCronjobHistoryPreviousNoCronfile(t *testing.T) {
 	}
 	if d.Tag != "" {
 		t.Errorf("expected empty tag, got %q", d.Tag)
+	}
+}
+
+func TestCronjobHistoryPreviousNoBlock(t *testing.T) {
+	cfg := cronjobTestConfig()
+
+	p := &cronjobHistoryProvider{
+		cfg: cfg,
+		run: func(_ context.Context, addr, cmd string) (string, error) {
+			return "# hoist:begin other-prod\n# hoist:tag=other\n# hoist:end other-prod\n", nil
+		},
+	}
+
+	d, err := p.previous(context.Background(), "report", "prod")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.Tag != "" {
+		t.Errorf("expected empty tag when block not found, got %q", d.Tag)
 	}
 }
 

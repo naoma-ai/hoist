@@ -403,7 +403,6 @@ services:
       prod:
         node: n1
         envfile: /etc/report/prod.env
-        cronfile: /etc/cron.d/hoist-report-prod
 `
 	cfg, err := loadConfig(writeTemp(t, yaml))
 	if err != nil {
@@ -419,10 +418,6 @@ services:
 	}
 	if svc.Command != "/run-report" {
 		t.Errorf("expected command '/run-report', got %s", svc.Command)
-	}
-	ec := svc.Env["prod"]
-	if ec.Cronfile != "/etc/cron.d/hoist-report-prod" {
-		t.Errorf("expected cronfile path, got %s", ec.Cronfile)
 	}
 }
 
@@ -446,7 +441,6 @@ services:
       prod:
         node: n1
         envfile: .env
-        cronfile: /etc/cron.d/report
 `,
 			wantErr: "missing image",
 		},
@@ -464,7 +458,6 @@ services:
       prod:
         node: n1
         envfile: .env
-        cronfile: /etc/cron.d/report
 `,
 			wantErr: "missing schedule",
 		},
@@ -484,7 +477,6 @@ services:
       prod:
         node: n1
         envfile: .env
-        cronfile: /etc/cron.d/report
 `,
 			wantErr: "must not have port",
 		},
@@ -504,7 +496,6 @@ services:
       prod:
         node: n1
         envfile: .env
-        cronfile: /etc/cron.d/report
 `,
 			wantErr: "must not have healthcheck",
 		},
@@ -543,7 +534,6 @@ services:
     env:
       prod:
         envfile: .env
-        cronfile: /etc/cron.d/report
 `,
 			wantErr: "missing node",
 		},
@@ -561,27 +551,8 @@ services:
     env:
       prod:
         node: n1
-        cronfile: /etc/cron.d/report
 `,
 			wantErr: "missing envfile",
-		},
-		{
-			name: "missing cronfile",
-			yaml: `
-project: test
-nodes:
-  n1: 10.0.0.1
-services:
-  report:
-    type: cronjob
-    image: myapp/report
-    schedule: "0 0 * * *"
-    env:
-      prod:
-        node: n1
-        envfile: .env
-`,
-			wantErr: "missing cronfile",
 		},
 		{
 			name: "undefined node",
@@ -598,7 +569,6 @@ services:
       prod:
         node: nonexistent
         envfile: .env
-        cronfile: /etc/cron.d/report
 `,
 			wantErr: "not defined in nodes",
 		},

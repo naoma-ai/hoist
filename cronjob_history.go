@@ -18,14 +18,19 @@ func (p *cronjobHistoryProvider) current(ctx context.Context, service, env strin
 	ec := svc.Env[env]
 	addr := p.cfg.Nodes[ec.Node]
 
-	// Read cronfile for current tag.
-	catCmd := fmt.Sprintf("cat %s 2>/dev/null", ec.Cronfile)
-	out, err := p.run(ctx, addr, catCmd)
+	// Read crontab and extract block for this service.
+	blockID := service + "-" + env
+	out, err := p.run(ctx, addr, "crontab -l 2>/dev/null")
 	if err != nil || out == "" {
 		return deploy{}, nil
 	}
 
-	tag := parseCronfileTag(out, "tag")
+	block := extractCrontabBlock(out, blockID)
+	if block == "" {
+		return deploy{}, nil
+	}
+
+	tag := parseCronfileTag(block, "tag")
 	if tag == "" {
 		return deploy{}, nil
 	}
@@ -52,13 +57,18 @@ func (p *cronjobHistoryProvider) previous(ctx context.Context, service, env stri
 	ec := svc.Env[env]
 	addr := p.cfg.Nodes[ec.Node]
 
-	catCmd := fmt.Sprintf("cat %s 2>/dev/null", ec.Cronfile)
-	out, err := p.run(ctx, addr, catCmd)
+	blockID := service + "-" + env
+	out, err := p.run(ctx, addr, "crontab -l 2>/dev/null")
 	if err != nil || out == "" {
 		return deploy{}, nil
 	}
 
-	tag := parseCronfileTag(out, "previous")
+	block := extractCrontabBlock(out, blockID)
+	if block == "" {
+		return deploy{}, nil
+	}
+
+	tag := parseCronfileTag(block, "previous")
 	if tag == "" {
 		return deploy{}, nil
 	}

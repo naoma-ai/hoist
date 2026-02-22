@@ -31,8 +31,6 @@ type envConfig struct {
 	// Static fields
 	Bucket     string `yaml:"bucket"`
 	CloudFront string `yaml:"cloudfront"`
-	// Cronjob fields
-	Cronfile string `yaml:"cronfile"`
 }
 
 func loadConfig(path string) (config, error) {
@@ -128,9 +126,6 @@ func validateConfig(cfg config) error {
 				}
 				if env.EnvFile == "" {
 					return fmt.Errorf("service %q env %q: missing envfile", name, envName)
-				}
-				if env.Cronfile == "" {
-					return fmt.Errorf("service %q env %q: missing cronfile", name, envName)
 				}
 			}
 		}

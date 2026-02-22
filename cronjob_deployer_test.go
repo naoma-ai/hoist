@@ -21,9 +21,8 @@ func cronjobTestConfig() config {
 				Command:  "/run-report",
 				Env: map[string]envConfig{
 					"prod": {
-						Node:     "web1",
-						EnvFile:  "/etc/report/prod.env",
-						Cronfile: "/etc/cron.d/hoist-report-prod",
+						Node:    "web1",
+						EnvFile: "/etc/report/prod.env",
 					},
 				},
 			},
@@ -33,11 +32,14 @@ func cronjobTestConfig() config {
 
 func TestCronjobDeployHappyPath(t *testing.T) {
 	cfg := cronjobTestConfig()
+
+	existingCrontab := "# hoist:begin report-prod\n# hoist:tag=old-tag\n# hoist:previous=older-tag\n0 0 * * * docker run ...\n# hoist:end report-prod\n"
+
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{output: ""},                                                   // docker pull
-			{output: "# hoist:tag=old-tag\n# hoist:previous=older-tag\n"}, // cat cronfile
-			{output: ""},                                                   // write cronfile
+			{output: ""},                // docker pull
+			{output: existingCrontab},   // crontab -l
+			{output: ""},                // printf | crontab -
 		},
 	}
 	var dialAddr string
@@ -68,18 +70,27 @@ func TestCronjobDeployHappyPath(t *testing.T) {
 		t.Errorf("cmd[0] = %q, want docker pull", mock.commands[0])
 	}
 
-	// 2. cat cronfile (to get previous tag)
-	if !strings.Contains(mock.commands[1], "cat /etc/cron.d/hoist-report-prod") {
-		t.Errorf("cmd[1] = %q, want cat cronfile", mock.commands[1])
+	// 2. crontab -l
+	if !strings.Contains(mock.commands[1], "crontab -l") {
+		t.Errorf("cmd[1] = %q, want crontab -l", mock.commands[1])
 	}
 
-	// 3. write cronfile
+	// 3. write crontab
 	writeCmd := mock.commands[2]
+	if !strings.Contains(writeCmd, "crontab -") {
+		t.Errorf("write command should pipe to crontab -, got: %s", writeCmd)
+	}
 	if !strings.Contains(writeCmd, "hoist:tag=main-abc1234-20250101000000") {
-		t.Errorf("cronfile should contain new tag, got: %s", writeCmd)
+		t.Errorf("crontab should contain new tag, got: %s", writeCmd)
 	}
 	if !strings.Contains(writeCmd, "hoist:previous=old-tag") {
-		t.Errorf("cronfile should contain previous tag from existing file, got: %s", writeCmd)
+		t.Errorf("crontab should contain previous tag from existing block, got: %s", writeCmd)
+	}
+	if !strings.Contains(writeCmd, "hoist:begin report-prod") {
+		t.Errorf("crontab should contain begin marker, got: %s", writeCmd)
+	}
+	if !strings.Contains(writeCmd, "hoist:end report-prod") {
+		t.Errorf("crontab should contain end marker, got: %s", writeCmd)
 	}
 }
 
@@ -87,8 +98,9 @@ func TestCronjobDeployWithOldTag(t *testing.T) {
 	cfg := cronjobTestConfig()
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{output: ""}, // docker pull
-			{output: ""}, // write cronfile (no cat because oldTag is provided)
+			{output: ""},  // docker pull
+			{output: ""},  // crontab -l (empty, first deploy but oldTag provided)
+			{output: ""},  // printf | crontab -
 		},
 	}
 
@@ -102,14 +114,13 @@ func TestCronjobDeployWithOldTag(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// When oldTag is provided, no cat command needed.
-	if len(mock.commands) != 2 {
-		t.Fatalf("expected 2 commands, got %d: %v", len(mock.commands), mock.commands)
+	if len(mock.commands) != 3 {
+		t.Fatalf("expected 3 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
-	writeCmd := mock.commands[1]
+	writeCmd := mock.commands[2]
 	if !strings.Contains(writeCmd, "hoist:previous=main-old1234-20241231000000") {
-		t.Errorf("cronfile should use provided oldTag, got: %s", writeCmd)
+		t.Errorf("crontab should use provided oldTag, got: %s", writeCmd)
 	}
 }
 
@@ -117,9 +128,9 @@ func TestCronjobDeployFirstDeploy(t *testing.T) {
 	cfg := cronjobTestConfig()
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{output: ""},                            // docker pull
-			{output: "", err: fmt.Errorf("no file")}, // cat cronfile fails (first deploy)
-			{output: ""},                            // write cronfile
+			{output: ""},                             // docker pull
+			{output: "", err: fmt.Errorf("no crontab for user")}, // crontab -l fails (first deploy)
+			{output: ""},                             // printf | crontab -
 		},
 	}
 
@@ -135,7 +146,84 @@ func TestCronjobDeployFirstDeploy(t *testing.T) {
 
 	writeCmd := mock.commands[2]
 	if !strings.Contains(writeCmd, "hoist:previous=") {
-		t.Errorf("cronfile should have empty previous, got: %s", writeCmd)
+		t.Errorf("crontab should have empty previous, got: %s", writeCmd)
+	}
+	if !strings.Contains(writeCmd, "hoist:begin report-prod") {
+		t.Errorf("crontab should contain begin marker, got: %s", writeCmd)
+	}
+}
+
+func TestCronjobDeployAppendsBlock(t *testing.T) {
+	cfg := cronjobTestConfig()
+
+	// Existing crontab with a different service's block.
+	existingCrontab := "# hoist:begin other-prod\n# hoist:tag=other-tag\n0 * * * * docker run other\n# hoist:end other-prod\n"
+
+	mock := &mockSSHRunner{
+		responses: []mockRunResult{
+			{output: ""},              // docker pull
+			{output: existingCrontab}, // crontab -l
+			{output: ""},              // printf | crontab -
+		},
+	}
+
+	d := &cronjobDeployer{
+		cfg:  cfg,
+		dial: func(_ string) (sshRunner, error) { return mock, nil },
+	}
+
+	err := d.deploy(context.Background(), "report", "prod", "main-abc1234-20250101000000", "", nopLogf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	writeCmd := mock.commands[2]
+	// Should preserve the other block.
+	if !strings.Contains(writeCmd, "hoist:begin other-prod") {
+		t.Errorf("crontab should preserve other blocks, got: %s", writeCmd)
+	}
+	// Should append the new block.
+	if !strings.Contains(writeCmd, "hoist:begin report-prod") {
+		t.Errorf("crontab should contain new block, got: %s", writeCmd)
+	}
+}
+
+func TestCronjobDeployReplacesBlock(t *testing.T) {
+	cfg := cronjobTestConfig()
+
+	// Existing crontab with both our block and another block.
+	existingCrontab := "# hoist:begin other-prod\n# hoist:tag=other-tag\n0 * * * * docker run other\n# hoist:end other-prod\n# hoist:begin report-prod\n# hoist:tag=old-tag\n# hoist:previous=older-tag\n0 0 * * * docker run old\n# hoist:end report-prod\n"
+
+	mock := &mockSSHRunner{
+		responses: []mockRunResult{
+			{output: ""},              // docker pull
+			{output: existingCrontab}, // crontab -l
+			{output: ""},              // printf | crontab -
+		},
+	}
+
+	d := &cronjobDeployer{
+		cfg:  cfg,
+		dial: func(_ string) (sshRunner, error) { return mock, nil },
+	}
+
+	err := d.deploy(context.Background(), "report", "prod", "main-abc1234-20250101000000", "", nopLogf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	writeCmd := mock.commands[2]
+	// Should preserve the other block.
+	if !strings.Contains(writeCmd, "hoist:begin other-prod") {
+		t.Errorf("crontab should preserve other blocks, got: %s", writeCmd)
+	}
+	// Should have updated tag.
+	if !strings.Contains(writeCmd, "hoist:tag=main-abc1234-20250101000000") {
+		t.Errorf("crontab should contain new tag, got: %s", writeCmd)
+	}
+	// Previous should be the old tag.
+	if !strings.Contains(writeCmd, "hoist:previous=old-tag") {
+		t.Errorf("crontab should contain previous=old-tag, got: %s", writeCmd)
 	}
 }
 
@@ -196,7 +284,6 @@ func TestBuildCronLine(t *testing.T) {
 
 	checks := []string{
 		"0 0 * * *",
-		"root",
 		"docker rm -f report-prod 2>/dev/null;",
 		"docker run",
 		"--name report-prod",
@@ -211,6 +298,11 @@ func TestBuildCronLine(t *testing.T) {
 		if !strings.Contains(line, check) {
 			t.Errorf("expected cron line to contain %q, got: %s", check, line)
 		}
+	}
+
+	// Should NOT contain "root" user field.
+	if strings.Contains(line, " root ") {
+		t.Errorf("cron line should not contain root user field, got: %s", line)
 	}
 }
 
@@ -232,7 +324,7 @@ func TestBuildCronLineNoCommand(t *testing.T) {
 }
 
 func TestParseCronfileTag(t *testing.T) {
-	content := "# hoist:tag=main-abc1234-20250101000000\n# hoist:previous=main-old1234-20241231000000\n0 0 * * * root docker run ...\n"
+	content := "# hoist:tag=main-abc1234-20250101000000\n# hoist:previous=main-old1234-20241231000000\n0 0 * * * docker run ...\n"
 
 	tag := parseCronfileTag(content, "tag")
 	if tag != "main-abc1234-20250101000000" {
@@ -248,4 +340,72 @@ func TestParseCronfileTag(t *testing.T) {
 	if missing != "" {
 		t.Errorf("expected empty string for missing key, got %q", missing)
 	}
+}
+
+func TestExtractCrontabBlock(t *testing.T) {
+	crontab := "# hoist:begin report-prod\n# hoist:tag=abc123\n# hoist:previous=old123\n0 0 * * * docker run report\n# hoist:end report-prod\n# hoist:begin other-prod\n# hoist:tag=xyz\n# hoist:end other-prod\n"
+
+	block := extractCrontabBlock(crontab, "report-prod")
+	if !strings.Contains(block, "hoist:tag=abc123") {
+		t.Errorf("expected block to contain tag, got: %q", block)
+	}
+	if strings.Contains(block, "other-prod") {
+		t.Errorf("block should not contain other service's content")
+	}
+
+	// Non-existent block.
+	empty := extractCrontabBlock(crontab, "nonexistent")
+	if empty != "" {
+		t.Errorf("expected empty string for missing block, got: %q", empty)
+	}
+
+	// Empty crontab.
+	empty2 := extractCrontabBlock("", "report-prod")
+	if empty2 != "" {
+		t.Errorf("expected empty string for empty crontab, got: %q", empty2)
+	}
+}
+
+func TestReplaceCrontabBlock(t *testing.T) {
+	newBlock := "# hoist:begin report-prod\n# hoist:tag=new-tag\n# hoist:previous=old-tag\n0 0 * * * docker run new\n# hoist:end report-prod"
+
+	t.Run("replace existing", func(t *testing.T) {
+		crontab := "# hoist:begin report-prod\n# hoist:tag=old-tag\n0 0 * * * docker run old\n# hoist:end report-prod\n"
+		result := replaceCrontabBlock(crontab, "report-prod", newBlock)
+		if !strings.Contains(result, "hoist:tag=new-tag") {
+			t.Errorf("expected new tag, got: %s", result)
+		}
+		if strings.Contains(result, "hoist:tag=old-tag") {
+			t.Errorf("should not contain old tag, got: %s", result)
+		}
+	})
+
+	t.Run("append to empty", func(t *testing.T) {
+		result := replaceCrontabBlock("", "report-prod", newBlock)
+		if !strings.Contains(result, "hoist:begin report-prod") {
+			t.Errorf("expected new block, got: %s", result)
+		}
+	})
+
+	t.Run("append to existing other", func(t *testing.T) {
+		crontab := "# hoist:begin other-prod\n# hoist:tag=other\n0 * * * * docker run other\n# hoist:end other-prod\n"
+		result := replaceCrontabBlock(crontab, "report-prod", newBlock)
+		if !strings.Contains(result, "hoist:begin other-prod") {
+			t.Errorf("should preserve other block, got: %s", result)
+		}
+		if !strings.Contains(result, "hoist:begin report-prod") {
+			t.Errorf("should append new block, got: %s", result)
+		}
+	})
+
+	t.Run("replace preserves other blocks", func(t *testing.T) {
+		crontab := "# hoist:begin other-prod\n# hoist:tag=other\n0 * * * * docker run other\n# hoist:end other-prod\n# hoist:begin report-prod\n# hoist:tag=old-tag\n0 0 * * * docker run old\n# hoist:end report-prod\n"
+		result := replaceCrontabBlock(crontab, "report-prod", newBlock)
+		if !strings.Contains(result, "hoist:begin other-prod") {
+			t.Errorf("should preserve other block, got: %s", result)
+		}
+		if !strings.Contains(result, "hoist:tag=new-tag") {
+			t.Errorf("should have new tag, got: %s", result)
+		}
+	})
 }

@@ -157,14 +157,12 @@ func testConfig() config {
 				Command:  "/run-report",
 				Env: map[string]envConfig{
 					"staging": {
-						Node:     "web1",
-						EnvFile:  "/etc/report/staging.env",
-						Cronfile: "/etc/cron.d/hoist-report-staging",
+						Node:    "web1",
+						EnvFile: "/etc/report/staging.env",
 					},
 					"production": {
-						Node:     "web2",
-						EnvFile:  "/etc/report/production.env",
-						Cronfile: "/etc/cron.d/hoist-report-production",
+						Node:    "web2",
+						EnvFile: "/etc/report/production.env",
 					},
 				},
 			},
