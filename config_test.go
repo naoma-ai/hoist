@@ -388,6 +388,235 @@ services:
 	}
 }
 
+func TestLoadConfigCronjobValid(t *testing.T) {
+	yaml := `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    schedule: "0 0 * * *"
+    command: /run-report
+    env:
+      prod:
+        node: n1
+        envfile: /etc/report/prod.env
+        cronfile: /etc/cron.d/hoist-report-prod
+`
+	cfg, err := loadConfig(writeTemp(t, yaml))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	svc := cfg.Services["report"]
+	if svc.Type != "cronjob" {
+		t.Errorf("expected type cronjob, got %s", svc.Type)
+	}
+	if svc.Schedule != "0 0 * * *" {
+		t.Errorf("expected schedule '0 0 * * *', got %s", svc.Schedule)
+	}
+	if svc.Command != "/run-report" {
+		t.Errorf("expected command '/run-report', got %s", svc.Command)
+	}
+	ec := svc.Env["prod"]
+	if ec.Cronfile != "/etc/cron.d/hoist-report-prod" {
+		t.Errorf("expected cronfile path, got %s", ec.Cronfile)
+	}
+}
+
+func TestLoadConfigCronjobMissingFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "missing image",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    schedule: "0 0 * * *"
+    env:
+      prod:
+        node: n1
+        envfile: .env
+        cronfile: /etc/cron.d/report
+`,
+			wantErr: "missing image",
+		},
+		{
+			name: "missing schedule",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    env:
+      prod:
+        node: n1
+        envfile: .env
+        cronfile: /etc/cron.d/report
+`,
+			wantErr: "missing schedule",
+		},
+		{
+			name: "has port",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    schedule: "0 0 * * *"
+    port: 8080
+    env:
+      prod:
+        node: n1
+        envfile: .env
+        cronfile: /etc/cron.d/report
+`,
+			wantErr: "must not have port",
+		},
+		{
+			name: "has healthcheck",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    schedule: "0 0 * * *"
+    healthcheck: /health
+    env:
+      prod:
+        node: n1
+        envfile: .env
+        cronfile: /etc/cron.d/report
+`,
+			wantErr: "must not have healthcheck",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loadConfig(writeTemp(t, tt.yaml))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadConfigCronjobEnvMissingFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "missing node",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    schedule: "0 0 * * *"
+    env:
+      prod:
+        envfile: .env
+        cronfile: /etc/cron.d/report
+`,
+			wantErr: "missing node",
+		},
+		{
+			name: "missing envfile",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    schedule: "0 0 * * *"
+    env:
+      prod:
+        node: n1
+        cronfile: /etc/cron.d/report
+`,
+			wantErr: "missing envfile",
+		},
+		{
+			name: "missing cronfile",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    schedule: "0 0 * * *"
+    env:
+      prod:
+        node: n1
+        envfile: .env
+`,
+			wantErr: "missing cronfile",
+		},
+		{
+			name: "undefined node",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    schedule: "0 0 * * *"
+    env:
+      prod:
+        node: nonexistent
+        envfile: .env
+        cronfile: /etc/cron.d/report
+`,
+			wantErr: "not defined in nodes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loadConfig(writeTemp(t, tt.yaml))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestLoadConfigFileNotFound(t *testing.T) {
 	_, err := loadConfig("/nonexistent/path/hoist.yml")
 	if err == nil {

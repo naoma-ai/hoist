@@ -8,13 +8,15 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 )
 
-// version is set via -ldflags "-X main.version=v1.2.3" for release builds.
+// version and buildTime are set via -ldflags for release builds.
 // When unset, buildVersion() falls back to VCS info embedded by go install.
 var version = ""
+var buildTime = ""
 
 func buildVersion() string {
 	if version != "" {
@@ -24,7 +26,7 @@ func buildVersion() string {
 	if !ok {
 		return "dev"
 	}
-	var revision, dirty, vcsTime string
+	var revision, dirty string
 	for _, s := range info.Settings {
 		switch s.Key {
 		case "vcs.revision":
@@ -37,14 +39,16 @@ func buildVersion() string {
 			if s.Value == "true" {
 				dirty = "-dirty"
 			}
-		case "vcs.time":
-			vcsTime = s.Value
 		}
 	}
-	if revision != "" {
-		return revision + dirty + " (" + vcsTime + ")"
+	if revision == "" {
+		return "dev"
 	}
-	return "dev"
+	ts := buildTime
+	if ts == "" {
+		ts = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	}
+	return revision + dirty + " (" + ts + ")"
 }
 
 func newRootCmd() *cobra.Command {

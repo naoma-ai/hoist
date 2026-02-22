@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -10,10 +11,12 @@ import (
 func TestGetStatusAllServices(t *testing.T) {
 	cfg := testConfig()
 	deploys := map[string]deploy{
-		"backend:staging":     {Service: "backend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 3 * time.Hour},
-		"backend:production":  {Service: "backend", Env: "production", Tag: "main-def5678-20241231000000", Uptime: 48 * time.Hour},
-		"frontend:staging":    {Service: "frontend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 1 * time.Hour},
-		"frontend:production": {Service: "frontend", Env: "production", Tag: "main-def5678-20241231000000", Uptime: 24 * time.Hour},
+		"backend:staging":      {Service: "backend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 3 * time.Hour},
+		"backend:production":   {Service: "backend", Env: "production", Tag: "main-def5678-20241231000000", Uptime: 48 * time.Hour},
+		"frontend:staging":     {Service: "frontend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 1 * time.Hour},
+		"frontend:production":  {Service: "frontend", Env: "production", Tag: "main-def5678-20241231000000", Uptime: 24 * time.Hour},
+		"report:staging":       {Service: "report", Env: "staging", Tag: "main-abc1234-20250101000000"},
+		"report:production":    {Service: "report", Env: "production", Tag: "main-def5678-20241231000000"},
 	}
 	p, _ := testProviders(nil, deploys)
 
@@ -21,8 +24,8 @@ func TestGetStatusAllServices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(rows) != 4 {
-		t.Fatalf("expected 4 rows, got %d", len(rows))
+	if len(rows) != 6 {
+		t.Fatalf("expected 6 rows, got %d", len(rows))
 	}
 
 	// Rows should be sorted by service name, then env
@@ -33,6 +36,8 @@ func TestGetStatusAllServices(t *testing.T) {
 		{"backend", "staging"},
 		{"frontend", "production"},
 		{"frontend", "staging"},
+		{"report", "production"},
+		{"report", "staging"},
 	}
 	for i, e := range expected {
 		if rows[i].Service != e.service || rows[i].Env != e.env {
@@ -46,6 +51,7 @@ func TestGetStatusFilteredByEnv(t *testing.T) {
 	deploys := map[string]deploy{
 		"backend:staging":  {Service: "backend", Env: "staging", Tag: "tag1", Uptime: time.Hour},
 		"frontend:staging": {Service: "frontend", Env: "staging", Tag: "tag2", Uptime: time.Hour},
+		"report:staging":   {Service: "report", Env: "staging", Tag: "tag3"},
 	}
 	p, _ := testProviders(nil, deploys)
 
@@ -53,8 +59,8 @@ func TestGetStatusFilteredByEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
 	for _, r := range rows {
 		if r.Env != "staging" {
@@ -63,7 +69,7 @@ func TestGetStatusFilteredByEnv(t *testing.T) {
 	}
 }
 
-func TestGetStatusHealthValues(t *testing.T) {
+func TestGetStatusTypeField(t *testing.T) {
 	cfg := testConfig()
 	deploys := map[string]deploy{
 		"backend:staging":  {Service: "backend", Env: "staging", Tag: "tag1", Uptime: time.Hour},
@@ -76,27 +82,29 @@ func TestGetStatusHealthValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var backendHealth, frontendHealth string
 	for _, r := range rows {
-		if r.Service == "backend" {
-			backendHealth = r.Health
+		switch r.Service {
+		case "backend":
+			if r.Type != "server" {
+				t.Errorf("expected backend type 'server', got %q", r.Type)
+			}
+			if r.Health != "healthy" {
+				t.Errorf("expected backend health 'healthy', got %q", r.Health)
+			}
+		case "frontend":
+			if r.Type != "static" {
+				t.Errorf("expected frontend type 'static', got %q", r.Type)
+			}
+			if r.Health != "" {
+				t.Errorf("expected frontend health empty, got %q", r.Health)
+			}
 		}
-		if r.Service == "frontend" {
-			frontendHealth = r.Health
-		}
-	}
-
-	if backendHealth != "healthy" {
-		t.Errorf("expected backend health 'healthy', got %q", backendHealth)
-	}
-	if frontendHealth != "-" {
-		t.Errorf("expected frontend health '-', got %q", frontendHealth)
 	}
 }
 
 func TestGetStatusMissingDeploy(t *testing.T) {
 	cfg := testConfig()
-	// Only backend:staging has a deploy; frontend:staging returns zero deploy (not deployed yet)
+	// Only backend:staging has a deploy; others return zero deploy (not deployed yet)
 	deploys := map[string]deploy{
 		"backend:staging": {Service: "backend", Env: "staging", Tag: "tag1", Uptime: time.Hour},
 	}
@@ -106,8 +114,8 @@ func TestGetStatusMissingDeploy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
 
 	for _, r := range rows {
@@ -160,23 +168,75 @@ func TestFormatUptime(t *testing.T) {
 	}
 }
 
-func TestFormatStatusTable(t *testing.T) {
+func TestFormatStatusTableGroupedByType(t *testing.T) {
 	rows := []statusRow{
-		{Service: "backend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 3 * time.Hour, Health: "healthy"},
-		{Service: "frontend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 1 * time.Hour, Health: "-"},
+		{Service: "backend", Env: "staging", Tag: "main-abc1234-20250101000000", Type: "server", Uptime: 3 * time.Hour, Health: "healthy"},
+		{Service: "frontend", Env: "staging", Tag: "main-abc1234-20250101000000", Type: "static", Uptime: 1 * time.Hour},
 	}
 	output := formatStatusTable(rows)
-	if output == "" {
-		t.Fatal("expected non-empty output")
+
+	if !contains(output, "SERVERS") {
+		t.Error("expected SERVERS section header")
 	}
-	if !contains(output, "SERVICE") || !contains(output, "TAG") || !contains(output, "UPTIME") || !contains(output, "HEALTH") {
-		t.Error("expected table headers")
+	if !contains(output, "STATIC") {
+		t.Error("expected STATIC section header")
 	}
-	if !contains(output, "backend-staging") {
-		t.Error("expected backend-staging label")
+	if !contains(output, "backend") {
+		t.Error("expected backend in output")
 	}
-	if !contains(output, "frontend-staging") {
-		t.Error("expected frontend-staging label")
+	if !contains(output, "frontend") {
+		t.Error("expected frontend in output")
+	}
+	// HEALTH should appear in server section.
+	if !contains(output, "HEALTH") {
+		t.Error("expected HEALTH column in server section")
+	}
+	if !contains(output, "healthy") {
+		t.Error("expected 'healthy' in server section")
+	}
+}
+
+func TestFormatStatusTableCronjobSection(t *testing.T) {
+	rows := []statusRow{
+		{Service: "report", Env: "prod", Tag: "main-abc1234-20250101000000", Type: "cronjob", Schedule: "0 0 * * *", LastRun: "2h ago (exit 0)"},
+	}
+	output := formatStatusTable(rows)
+
+	if !contains(output, "CRONJOBS") {
+		t.Error("expected CRONJOBS section header")
+	}
+	if !contains(output, "SCHEDULE") {
+		t.Error("expected SCHEDULE column")
+	}
+	if !contains(output, "LAST RUN") {
+		t.Error("expected LAST RUN column")
+	}
+	if !contains(output, "0 0 * * *") {
+		t.Error("expected schedule value")
+	}
+	if !contains(output, "2h ago (exit 0)") {
+		t.Error("expected last run value")
+	}
+}
+
+func TestFormatStatusTableSectionOrder(t *testing.T) {
+	rows := []statusRow{
+		{Service: "report", Env: "prod", Type: "cronjob", Tag: "tag1", Schedule: "0 0 * * *", LastRun: "never"},
+		{Service: "backend", Env: "prod", Type: "server", Tag: "tag2", Uptime: time.Hour, Health: "healthy"},
+		{Service: "frontend", Env: "prod", Type: "static", Tag: "tag3", Uptime: time.Hour},
+	}
+	output := formatStatusTable(rows)
+
+	serverIdx := strings.Index(output, "SERVERS")
+	staticIdx := strings.Index(output, "STATIC")
+	cronjobIdx := strings.Index(output, "CRONJOBS")
+
+	if serverIdx < 0 || staticIdx < 0 || cronjobIdx < 0 {
+		t.Fatalf("expected all sections, got:\n%s", output)
+	}
+
+	if serverIdx > staticIdx || staticIdx > cronjobIdx {
+		t.Errorf("expected section order SERVERS < STATIC < CRONJOBS, got positions %d, %d, %d", serverIdx, staticIdx, cronjobIdx)
 	}
 }
 
@@ -184,6 +244,24 @@ func TestFormatStatusTableEmpty(t *testing.T) {
 	output := formatStatusTable(nil)
 	if output != "No services found.\n" {
 		t.Errorf("expected 'No services found.' message, got %q", output)
+	}
+}
+
+func TestFormatStatusTableOnlyServerSection(t *testing.T) {
+	rows := []statusRow{
+		{Service: "backend", Env: "prod", Tag: "tag1", Type: "server", Uptime: time.Hour, Health: "healthy"},
+	}
+	output := formatStatusTable(rows)
+
+	if !contains(output, "SERVERS") {
+		t.Error("expected SERVERS section")
+	}
+	// Should NOT have STATIC or CRONJOBS sections.
+	if contains(output, "STATIC") {
+		t.Error("unexpected STATIC section")
+	}
+	if contains(output, "CRONJOBS") {
+		t.Error("unexpected CRONJOBS section")
 	}
 }
 

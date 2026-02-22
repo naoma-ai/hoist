@@ -27,10 +27,11 @@ type build struct {
 }
 
 type deploy struct {
-	Service string
-	Env     string
-	Tag     string
-	Uptime  time.Duration
+	Service  string
+	Env      string
+	Tag      string
+	Uptime   time.Duration
+	ExitCode int // cronjob: last run exit code
 }
 
 func buildFromTag(t tag) build {

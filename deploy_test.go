@@ -150,6 +150,24 @@ func testConfig() config {
 					},
 				},
 			},
+			"report": {
+				Type:     "cronjob",
+				Image:    "myapp/report",
+				Schedule: "0 0 * * *",
+				Command:  "/run-report",
+				Env: map[string]envConfig{
+					"staging": {
+						Node:     "web1",
+						EnvFile:  "/etc/report/staging.env",
+						Cronfile: "/etc/cron.d/hoist-report-staging",
+					},
+					"production": {
+						Node:     "web2",
+						EnvFile:  "/etc/report/production.env",
+						Cronfile: "/etc/cron.d/hoist-report-production",
+					},
+				},
+			},
 		},
 	}
 }
@@ -162,14 +180,17 @@ func testProviders(builds []build, deploys map[string]deploy) (providers, *mockD
 		builds: map[string]buildsProvider{
 			"backend":  bp,
 			"frontend": bp,
+			"report":   bp,
 		},
 		deployers: map[string]deployer{
-			"server": md,
-			"static": md,
+			"server":  md,
+			"static":  md,
+			"cronjob": md,
 		},
 		history: map[string]historyProvider{
-			"server": mh,
-			"static": mh,
+			"server":  mh,
+			"static":  mh,
+			"cronjob": mh,
 		},
 	}, md
 }
@@ -403,8 +424,8 @@ func TestEnvIntersectionNoOverlap(t *testing.T) {
 func TestSortedServiceNames(t *testing.T) {
 	cfg := testConfig()
 	names := sortedServiceNames(cfg)
-	if len(names) != 2 || names[0] != "backend" || names[1] != "frontend" {
-		t.Fatalf("expected [backend frontend], got %v", names)
+	if len(names) != 3 || names[0] != "backend" || names[1] != "frontend" || names[2] != "report" {
+		t.Fatalf("expected [backend frontend report], got %v", names)
 	}
 }
 

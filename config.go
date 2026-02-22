@@ -18,17 +18,21 @@ type serviceConfig struct {
 	Image       string               `yaml:"image"`
 	Port        int                  `yaml:"port"`
 	Healthcheck string               `yaml:"healthcheck"`
+	Schedule    string               `yaml:"schedule"` // cron expression (cronjob only)
+	Command     string               `yaml:"command"`  // container entrypoint override (cronjob only, optional)
 	Env         map[string]envConfig `yaml:"env"`
 }
 
 type envConfig struct {
-	// Server fields
+	// Server + cronjob fields
 	Node    string `yaml:"node"`
-	Host    string `yaml:"host"`
+	Host    string `yaml:"host"` // server only
 	EnvFile string `yaml:"envfile"`
 	// Static fields
 	Bucket     string `yaml:"bucket"`
 	CloudFront string `yaml:"cloudfront"`
+	// Cronjob fields
+	Cronfile string `yaml:"cronfile"`
 }
 
 func loadConfig(path string) (config, error) {
@@ -59,11 +63,12 @@ func validateConfig(cfg config) error {
 	}
 
 	for name, svc := range cfg.Services {
-		if svc.Type != "server" && svc.Type != "static" {
-			return fmt.Errorf("service %q: unknown type %q (must be \"server\" or \"static\")", name, svc.Type)
+		if svc.Type != "server" && svc.Type != "static" && svc.Type != "cronjob" {
+			return fmt.Errorf("service %q: unknown type %q (must be \"server\", \"static\", or \"cronjob\")", name, svc.Type)
 		}
 
-		if svc.Type == "server" {
+		switch svc.Type {
+		case "server":
 			if svc.Image == "" {
 				return fmt.Errorf("service %q: missing image", name)
 			}
@@ -72,6 +77,19 @@ func validateConfig(cfg config) error {
 			}
 			if svc.Healthcheck == "" {
 				return fmt.Errorf("service %q: missing healthcheck", name)
+			}
+		case "cronjob":
+			if svc.Image == "" {
+				return fmt.Errorf("service %q: missing image", name)
+			}
+			if svc.Schedule == "" {
+				return fmt.Errorf("service %q: missing schedule", name)
+			}
+			if svc.Port != 0 {
+				return fmt.Errorf("service %q: cronjob must not have port", name)
+			}
+			if svc.Healthcheck != "" {
+				return fmt.Errorf("service %q: cronjob must not have healthcheck", name)
 			}
 		}
 
@@ -100,6 +118,19 @@ func validateConfig(cfg config) error {
 				}
 				if env.CloudFront == "" {
 					return fmt.Errorf("service %q env %q: missing cloudfront", name, envName)
+				}
+			case "cronjob":
+				if env.Node == "" {
+					return fmt.Errorf("service %q env %q: missing node", name, envName)
+				}
+				if _, ok := cfg.Nodes[env.Node]; !ok {
+					return fmt.Errorf("service %q env %q: node %q not defined in nodes", name, envName, env.Node)
+				}
+				if env.EnvFile == "" {
+					return fmt.Errorf("service %q env %q: missing envfile", name, envName)
+				}
+				if env.Cronfile == "" {
+					return fmt.Errorf("service %q env %q: missing cronfile", name, envName)
 				}
 			}
 		}

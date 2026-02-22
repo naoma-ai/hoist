@@ -36,11 +36,12 @@ func newLogsCmd() *cobra.Command {
 				return err
 			}
 
-			// Default to server services (static services have no tailable logs)
+			// Default to server services (static and cronjob services have no persistent process to tail)
 			targets := services
 			if len(targets) == 0 {
 				for _, name := range sortedServiceNames(cfg) {
-					if cfg.Services[name].Type != "static" {
+					t := cfg.Services[name].Type
+					if t != "static" && t != "cronjob" {
 						targets = append(targets, name)
 					}
 				}

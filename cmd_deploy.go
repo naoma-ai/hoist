@@ -61,7 +61,7 @@ func newProviders(ctx context.Context, cfg config) (providers, error) {
 	builds := make(map[string]buildsProvider, len(cfg.Services))
 	for name, svc := range cfg.Services {
 		switch svc.Type {
-		case "server":
+		case "server", "cronjob":
 			builds[name] = &serverBuildsProvider{ecr: ecrClient, repoName: parseECRRepo(svc.Image)}
 		case "static":
 			for _, ec := range svc.Env {
@@ -71,25 +71,24 @@ func newProviders(ctx context.Context, cfg config) (providers, error) {
 		}
 	}
 
+	dial := func(addr string) (sshRunner, error) { return sshDial(addr) }
+
 	return providers{
 		builds: builds,
 		deployers: map[string]deployer{
-			"server": &serverDeployer{
-				cfg:  cfg,
-				dial: func(addr string) (sshRunner, error) { return sshDial(addr) },
-			},
-			"static": &staticDeployer{cfg: cfg, s3: s3Client, cloudfront: cfClient},
+			"server":  &serverDeployer{cfg: cfg, dial: dial},
+			"static":  &staticDeployer{cfg: cfg, s3: s3Client, cloudfront: cfClient},
+			"cronjob": &cronjobDeployer{cfg: cfg, dial: dial},
 		},
 		history: map[string]historyProvider{
-			"server": &serverHistoryProvider{cfg: cfg, run: sshRun},
-			"static": &staticHistoryProvider{cfg: cfg, s3: s3Client},
+			"server":  &serverHistoryProvider{cfg: cfg, run: sshRun},
+			"static":  &staticHistoryProvider{cfg: cfg, s3: s3Client},
+			"cronjob": &cronjobHistoryProvider{cfg: cfg, run: sshRun},
 		},
 		logs: map[string]logsProvider{
-			"server": &serverLogsProvider{
-				cfg:  cfg,
-				dial: func(addr string) (sshRunner, error) { return sshDial(addr) },
-			},
-			"static": &staticLogsProvider{},
+			"server":  &serverLogsProvider{cfg: cfg, dial: dial},
+			"static":  &staticLogsProvider{},
+			"cronjob": &cronjobLogsProvider{cfg: cfg, dial: dial},
 		},
 	}, nil
 }

@@ -10,11 +10,14 @@ import (
 )
 
 type statusRow struct {
-	Service string
-	Env     string
-	Tag     string
-	Uptime  time.Duration
-	Health  string
+	Service  string
+	Env      string
+	Tag      string
+	Type     string
+	Uptime   time.Duration
+	Health   string // server only
+	Schedule string // cronjob only
+	LastRun  string // cronjob only: "2h ago (exit 0)"
 }
 
 func getStatus(ctx context.Context, cfg config, p providers, envFilter string) ([]statusRow, error) {
@@ -67,13 +70,22 @@ func getStatus(ctx context.Context, cfg config, p providers, envFilter string) (
 				Service: q.name,
 				Env:     q.env,
 				Tag:     cur.Tag,
+				Type:    q.svc.Type,
 				Uptime:  cur.Uptime,
 			}
-			if q.svc.Type == "server" {
+
+			switch q.svc.Type {
+			case "server":
 				row.Health = "healthy"
-			} else {
-				row.Health = "-"
+			case "cronjob":
+				row.Schedule = q.svc.Schedule
+				if cur.Uptime > 0 {
+					row.LastRun = fmt.Sprintf("%s ago (exit %d)", formatUptime(cur.Uptime), cur.ExitCode)
+				} else if cur.Tag != "" {
+					row.LastRun = "never"
+				}
 			}
+
 			results[i] = result{row: row}
 		}(i, q)
 	}
@@ -104,30 +116,93 @@ func formatStatusTable(rows []statusRow) string {
 		return "No services found.\n"
 	}
 
-	// Calculate column widths
-	svcW, tagW, upW, healthW := len("SERVICE"), len("TAG"), len("UPTIME"), len("HEALTH")
+	// Group by type.
+	groups := map[string][]statusRow{}
 	for _, r := range rows {
-		label := r.Service + "-" + r.Env
-		if len(label) > svcW {
-			svcW = len(label)
-		}
-		if len(r.Tag) > tagW {
-			tagW = len(r.Tag)
-		}
-		u := formatUptime(r.Uptime)
-		if len(u) > upW {
-			upW = len(u)
-		}
-		if len(r.Health) > healthW {
-			healthW = len(r.Health)
-		}
+		groups[r.Type] = append(groups[r.Type], r)
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-*s  %-*s  %-*s  %-*s\n", svcW, "SERVICE", tagW, "TAG", upW, "UPTIME", healthW, "HEALTH")
-	for _, r := range rows {
-		label := r.Service + "-" + r.Env
-		fmt.Fprintf(&b, "%-*s  %-*s  %-*s  %-*s\n", svcW, label, tagW, r.Tag, upW, formatUptime(r.Uptime), healthW, r.Health)
+
+	// Render sections in order: servers, static, cronjobs.
+	sectionOrder := []struct {
+		key   string
+		label string
+	}{
+		{"server", "SERVERS"},
+		{"static", "STATIC"},
+		{"cronjob", "CRONJOBS"},
 	}
+
+	first := true
+	for _, sec := range sectionOrder {
+		sectionRows, ok := groups[sec.key]
+		if !ok || len(sectionRows) == 0 {
+			continue
+		}
+		if !first {
+			b.WriteString("\n")
+		}
+		first = false
+
+		fmt.Fprintf(&b, "%s\n", sec.label)
+
+		switch sec.key {
+		case "server":
+			formatServerSection(&b, sectionRows)
+		case "static":
+			formatStaticSection(&b, sectionRows)
+		case "cronjob":
+			formatCronjobSection(&b, sectionRows)
+		}
+	}
+
 	return b.String()
+}
+
+func formatServerSection(b *strings.Builder, rows []statusRow) {
+	svcW, envW, tagW, upW, healthW := len("SERVICE"), len("ENV"), len("TAG"), len("UPTIME"), len("HEALTH")
+	for _, r := range rows {
+		svcW = max(svcW, len(r.Service))
+		envW = max(envW, len(r.Env))
+		tagW = max(tagW, len(r.Tag))
+		upW = max(upW, len(formatUptime(r.Uptime)))
+		healthW = max(healthW, len(r.Health))
+	}
+
+	fmt.Fprintf(b, "%-*s  %-*s  %-*s  %-*s  %-*s\n", svcW, "SERVICE", envW, "ENV", tagW, "TAG", upW, "UPTIME", healthW, "HEALTH")
+	for _, r := range rows {
+		fmt.Fprintf(b, "%-*s  %-*s  %-*s  %-*s  %-*s\n", svcW, r.Service, envW, r.Env, tagW, r.Tag, upW, formatUptime(r.Uptime), healthW, r.Health)
+	}
+}
+
+func formatStaticSection(b *strings.Builder, rows []statusRow) {
+	svcW, envW, tagW, upW := len("SERVICE"), len("ENV"), len("TAG"), len("UPTIME")
+	for _, r := range rows {
+		svcW = max(svcW, len(r.Service))
+		envW = max(envW, len(r.Env))
+		tagW = max(tagW, len(r.Tag))
+		upW = max(upW, len(formatUptime(r.Uptime)))
+	}
+
+	fmt.Fprintf(b, "%-*s  %-*s  %-*s  %-*s\n", svcW, "SERVICE", envW, "ENV", tagW, "TAG", upW, "UPTIME")
+	for _, r := range rows {
+		fmt.Fprintf(b, "%-*s  %-*s  %-*s  %-*s\n", svcW, r.Service, envW, r.Env, tagW, r.Tag, upW, formatUptime(r.Uptime))
+	}
+}
+
+func formatCronjobSection(b *strings.Builder, rows []statusRow) {
+	svcW, envW, tagW, schedW, lastW := len("SERVICE"), len("ENV"), len("TAG"), len("SCHEDULE"), len("LAST RUN")
+	for _, r := range rows {
+		svcW = max(svcW, len(r.Service))
+		envW = max(envW, len(r.Env))
+		tagW = max(tagW, len(r.Tag))
+		schedW = max(schedW, len(r.Schedule))
+		lastW = max(lastW, len(r.LastRun))
+	}
+
+	fmt.Fprintf(b, "%-*s  %-*s  %-*s  %-*s  %-*s\n", svcW, "SERVICE", envW, "ENV", tagW, "TAG", schedW, "SCHEDULE", lastW, "LAST RUN")
+	for _, r := range rows {
+		fmt.Fprintf(b, "%-*s  %-*s  %-*s  %-*s  %-*s\n", svcW, r.Service, envW, r.Env, tagW, r.Tag, schedW, r.Schedule, lastW, r.LastRun)
+	}
 }
