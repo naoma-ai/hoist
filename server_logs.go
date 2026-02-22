@@ -29,10 +29,19 @@ func (p *serverLogsProvider) tail(ctx context.Context, service, env string, n in
 	if err != nil {
 		return fmt.Errorf("listing containers: %w", err)
 	}
-	if out == "" {
+
+	// Docker's name filter is a substring match, so we must check the prefix ourselves.
+	prefix := service + "-"
+	var container string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			container = line
+			break
+		}
+	}
+	if container == "" {
 		return fmt.Errorf("no running container for %s in %s", service, env)
 	}
-	container := strings.SplitN(out, "\n", 2)[0]
 
 	follow := n == 0 && since == ""
 	args := dockerLogsArgs(container, since, n, follow)

@@ -26,27 +26,26 @@ func (p *serverHistoryProvider) current(ctx context.Context, service, env string
 		return deploy{}, nil
 	}
 
-	// Take first matching line.
-	line := strings.SplitN(out, "\n", 2)[0]
-	parts := strings.SplitN(line, "\t", 2)
-	if len(parts) != 2 {
-		return deploy{}, fmt.Errorf("unexpected docker ps output: %q", line)
+	// Docker's name filter is a substring match, so we must check the prefix ourselves.
+	prefix := service + "-"
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		name := parts[0]
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		return deploy{
+			Service: service,
+			Env:     env,
+			Tag:     name[len(prefix):],
+			Uptime:  parseDockerUptime(parts[1]),
+		}, nil
 	}
 
-	name := parts[0]
-	status := parts[1]
-
-	tag := parseContainerTag(service, name)
-	if tag == "" {
-		return deploy{}, nil
-	}
-
-	return deploy{
-		Service: service,
-		Env:     env,
-		Tag:     tag,
-		Uptime:  parseDockerUptime(status),
-	}, nil
+	return deploy{}, nil
 }
 
 func (p *serverHistoryProvider) previous(ctx context.Context, service, env string) (deploy, error) {
@@ -64,7 +63,18 @@ func (p *serverHistoryProvider) previous(ctx context.Context, service, env strin
 		return deploy{}, nil
 	}
 
-	containerName := strings.SplitN(out, "\n", 2)[0]
+	// Docker's name filter is a substring match, so we must check the prefix ourselves.
+	prefix := service + "-"
+	var containerName string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			containerName = line
+			break
+		}
+	}
+	if containerName == "" {
+		return deploy{}, nil
+	}
 
 	// Read the hoist.previous label from the running container.
 	inspectCmd := fmt.Sprintf(`docker inspect --format "{{index .Config.Labels \"hoist.previous\"}}" %s`, containerName)
