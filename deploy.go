@@ -288,7 +288,7 @@ func deployAllWithLog(ctx context.Context, cfg config, p providers, services []s
 		fmt.Fprintln(w, "Deploy complete!")
 		if cfg.Hooks.PostDeploy != "" {
 			event := buildDeployEvent(cfg.Project, env, services, tags, previousTags, result, duration, false)
-			go firePostDeployHook(cfg.Hooks.PostDeploy, event)
+			firePostDeployHook(cfg.Hooks.PostDeploy, event)
 		}
 		return nil
 	}
@@ -302,7 +302,7 @@ func deployAllWithLog(ctx context.Context, cfg config, p providers, services []s
 
 	if cfg.Hooks.PostDeploy != "" {
 		event := buildDeployEvent(cfg.Project, env, services, tags, previousTags, result, duration, false)
-		go firePostDeployHook(cfg.Hooks.PostDeploy, event)
+		firePostDeployHook(cfg.Hooks.PostDeploy, event)
 	}
 
 	choice := promptRollback(promptIn)
@@ -349,7 +349,7 @@ func deployAllWithLog(ctx context.Context, cfg config, p providers, services []s
 	if cfg.Hooks.PostDeploy != "" {
 		rbDuration := time.Since(rbStart)
 		event := buildDeployEvent(cfg.Project, env, rollbackTargets, rollbackTags, tags, rbResult, rbDuration, true)
-		go firePostDeployHook(cfg.Hooks.PostDeploy, event)
+		firePostDeployHook(cfg.Hooks.PostDeploy, event)
 	}
 
 	return nil
