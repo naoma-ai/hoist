@@ -41,6 +41,19 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 	}
 	logf("image pulled")
 
+	// If redeploying the same tag, rename the existing container to avoid name conflict.
+	renamed := false
+	if tag == oldTag && oldTag != "" {
+		oldName := fmt.Sprintf("%s-%s", service, oldTag)
+		tempName := oldName + "-old"
+		renameCmd := fmt.Sprintf("docker rename %s %s", oldName, tempName)
+		logf("$ %s", renameCmd)
+		if _, err := client.run(ctx, renameCmd); err != nil {
+			return fmt.Errorf("renaming old container: %w", err)
+		}
+		renamed = true
+	}
+
 	// Start new container.
 	runArgs := buildDockerRunArgs(d.cfg.Project, service, tag, oldTag, svc, ec, env)
 	runCmd := "docker run " + shellJoin(runArgs)
@@ -74,6 +87,9 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 	// Stop and remove old container.
 	if oldTag != "" {
 		oldName := fmt.Sprintf("%s-%s", service, oldTag)
+		if renamed {
+			oldName += "-old"
+		}
 		logf("$ docker stop %s", oldName)
 		if _, err := client.run(ctx, fmt.Sprintf("docker stop %s", oldName)); err != nil {
 			return fmt.Errorf("stopping old container: %w", err)

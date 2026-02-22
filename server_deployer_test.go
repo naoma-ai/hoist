@@ -375,6 +375,49 @@ func TestServerDeployDialFailure(t *testing.T) {
 	}
 }
 
+func TestServerDeploySameTag(t *testing.T) {
+	cfg := testConfig()
+	mock := &mockSSHRunner{}
+
+	d := &serverDeployer{
+		cfg:          cfg,
+		dial:         func(_ string) (sshRunner, error) { return mock, nil },
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  1 * time.Second,
+	}
+
+	tag := "main-abc1234-20250101000000"
+	err := d.deploy(context.Background(), "backend", "staging", tag, tag, nopLogf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Expect: pull, rename, run, docker inspect, curl healthcheck, stop old, rm old = 7 commands.
+	if len(mock.commands) < 7 {
+		t.Fatalf("expected at least 7 commands, got %d: %v", len(mock.commands), mock.commands)
+	}
+
+	if !strings.HasPrefix(mock.commands[0], "docker pull") {
+		t.Errorf("cmd[0] = %q, want docker pull", mock.commands[0])
+	}
+	expectedRename := "docker rename backend-main-abc1234-20250101000000 backend-main-abc1234-20250101000000-old"
+	if mock.commands[1] != expectedRename {
+		t.Errorf("cmd[1] = %q, want %q", mock.commands[1], expectedRename)
+	}
+	if !strings.HasPrefix(mock.commands[2], "docker run") {
+		t.Errorf("cmd[2] = %q, want docker run", mock.commands[2])
+	}
+
+	// Last two: stop and rm the renamed container.
+	n := len(mock.commands)
+	if mock.commands[n-2] != "docker stop backend-main-abc1234-20250101000000-old" {
+		t.Errorf("cmd[%d] = %q, want docker stop -old", n-2, mock.commands[n-2])
+	}
+	if mock.commands[n-1] != "docker rm backend-main-abc1234-20250101000000-old" {
+		t.Errorf("cmd[%d] = %q, want docker rm -old", n-1, mock.commands[n-1])
+	}
+}
+
 func TestServerDeployLogOutput(t *testing.T) {
 	cfg := testConfig()
 	mock := &mockSSHRunner{}
