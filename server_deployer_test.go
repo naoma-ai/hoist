@@ -191,7 +191,17 @@ func TestPollHealthcheckContextCancelled(t *testing.T) {
 
 func TestServerDeployHappyPath(t *testing.T) {
 	cfg := testConfig()
-	mock := &mockSSHRunner{}
+	mock := &mockSSHRunner{
+		responses: []mockRunResult{
+			{},                      // docker pull
+			{},                      // docker run
+			{output: "172.17.0.2"},  // docker inspect
+			{output: "OK"},          // curl healthcheck
+			{output: "backend-main-abc1234-20250101000000\nbackend-main-old1234-20241231000000"}, // docker ps
+			{}, // docker stop old
+			{}, // docker rm old
+		},
+	}
 	var dialAddr string
 
 	d := &serverDeployer{
@@ -213,9 +223,9 @@ func TestServerDeployHappyPath(t *testing.T) {
 		t.Errorf("expected dial addr 10.0.0.1, got %s", dialAddr)
 	}
 
-	// Expect: pull, run, docker inspect, curl healthcheck, stop old, rm old = 6 commands.
-	if len(mock.commands) < 6 {
-		t.Fatalf("expected at least 6 commands, got %d: %v", len(mock.commands), mock.commands)
+	// Expect: pull, run, docker inspect, curl healthcheck, docker ps, stop old, rm old = 7 commands.
+	if len(mock.commands) < 7 {
+		t.Fatalf("expected at least 7 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	if !strings.HasPrefix(mock.commands[0], "docker pull myapp/backend:main-abc1234-20250101000000") {
@@ -377,7 +387,18 @@ func TestServerDeployDialFailure(t *testing.T) {
 
 func TestServerDeploySameTag(t *testing.T) {
 	cfg := testConfig()
-	mock := &mockSSHRunner{}
+	mock := &mockSSHRunner{
+		responses: []mockRunResult{
+			{},                      // docker pull
+			{},                      // docker rename
+			{},                      // docker run
+			{output: "172.17.0.2"},  // docker inspect
+			{output: "OK"},          // curl healthcheck
+			{output: "backend-main-abc1234-20250101000000\nbackend-main-abc1234-20250101000000-old"}, // docker ps
+			{}, // docker stop old
+			{}, // docker rm old
+		},
+	}
 
 	d := &serverDeployer{
 		cfg:          cfg,
@@ -392,9 +413,9 @@ func TestServerDeploySameTag(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Expect: pull, rename, run, docker inspect, curl healthcheck, stop old, rm old = 7 commands.
-	if len(mock.commands) < 7 {
-		t.Fatalf("expected at least 7 commands, got %d: %v", len(mock.commands), mock.commands)
+	// Expect: pull, rename, run, docker inspect, curl healthcheck, docker ps, stop old, rm old = 8 commands.
+	if len(mock.commands) < 8 {
+		t.Fatalf("expected at least 8 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	if !strings.HasPrefix(mock.commands[0], "docker pull") {
@@ -420,7 +441,17 @@ func TestServerDeploySameTag(t *testing.T) {
 
 func TestServerDeployLogOutput(t *testing.T) {
 	cfg := testConfig()
-	mock := &mockSSHRunner{}
+	mock := &mockSSHRunner{
+		responses: []mockRunResult{
+			{},                      // docker pull
+			{},                      // docker run
+			{output: "172.17.0.2"},  // docker inspect
+			{output: "OK"},          // curl healthcheck
+			{output: "backend-main-abc1234-20250101000000\nbackend-main-old1234-20241231000000"}, // docker ps
+			{}, // docker stop old
+			{}, // docker rm old
+		},
+	}
 
 	d := &serverDeployer{
 		cfg:          cfg,
@@ -448,7 +479,7 @@ func TestServerDeployLogOutput(t *testing.T) {
 		"healthcheck passed",
 		"docker stop",
 		"docker rm",
-		"old container removed",
+		"removed 1 old container(s)",
 	}
 	for _, e := range expected {
 		if !strings.Contains(output, e) {

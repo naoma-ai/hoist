@@ -42,7 +42,6 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 	logf("image pulled")
 
 	// If redeploying the same tag, rename the existing container to avoid name conflict.
-	renamed := false
 	if tag == oldTag && oldTag != "" {
 		oldName := fmt.Sprintf("%s-%s", service, oldTag)
 		tempName := oldName + "-old"
@@ -51,7 +50,6 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 		if _, err := client.run(ctx, renameCmd); err != nil {
 			return fmt.Errorf("renaming old container: %w", err)
 		}
-		renamed = true
 	}
 
 	// Start new container.
@@ -84,24 +82,62 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 	}
 	logf("healthcheck passed")
 
-	// Stop and remove old container.
-	if oldTag != "" {
-		oldName := fmt.Sprintf("%s-%s", service, oldTag)
-		if renamed {
-			oldName += "-old"
+	// Stop and remove ALL old containers for this service.
+	newName := service + "-" + tag
+	oldContainers, err := listServiceContainers(ctx, client, service)
+	if err != nil {
+		logf("warning: failed to list old containers: %v", err)
+	}
+	for _, name := range oldContainers {
+		if name == newName {
+			continue
 		}
-		logf("$ docker stop %s", oldName)
-		if _, err := client.run(ctx, fmt.Sprintf("docker stop %s", oldName)); err != nil {
-			return fmt.Errorf("stopping old container: %w", err)
+		logf("$ docker stop %s", name)
+		if _, err := client.run(ctx, fmt.Sprintf("docker stop %s", name)); err != nil {
+			logf("warning: failed to stop %s: %v", name, err)
+			continue
 		}
-		logf("$ docker rm %s", oldName)
-		if _, err := client.run(ctx, fmt.Sprintf("docker rm %s", oldName)); err != nil {
-			return fmt.Errorf("removing old container: %w", err)
+		logf("$ docker rm %s", name)
+		if _, err := client.run(ctx, fmt.Sprintf("docker rm %s", name)); err != nil {
+			logf("warning: failed to remove %s: %v", name, err)
 		}
-		logf("old container removed")
+	}
+	if len(oldContainers) > 0 {
+		removed := 0
+		for _, name := range oldContainers {
+			if name != newName {
+				removed++
+			}
+		}
+		if removed > 0 {
+			logf("removed %d old container(s)", removed)
+		}
 	}
 
 	return nil
+}
+
+// listServiceContainers returns the names of all running containers whose name
+// starts with "<service>-". This catches orphaned containers from previous deploys.
+func listServiceContainers(ctx context.Context, client sshRunner, service string) ([]string, error) {
+	cmd := fmt.Sprintf(`docker ps --filter "name=%s-" --format "{{.Names}}"`, service)
+	out, err := client.run(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return nil, nil
+	}
+	prefix := service + "-"
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			names = append(names, line)
+		}
+	}
+	return names, nil
 }
 
 func buildDockerRunArgs(project, service, tag, oldTag string, svc serviceConfig, ec envConfig, env string) []string {
