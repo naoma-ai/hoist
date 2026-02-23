@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"sync"
 )
 
 // linePrefixWriter wraps a writer and prepends a prefix to each line.
 // It buffers partial lines until a newline is seen.
+// It is safe for concurrent use (e.g. when both stdout and stderr write to it).
 type linePrefixWriter struct {
+	mu     sync.Mutex
 	w      io.Writer
 	prefix string
 	buf    []byte
@@ -20,6 +23,9 @@ func newLinePrefixWriter(w io.Writer, prefix string) *linePrefixWriter {
 }
 
 func (w *linePrefixWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	total := len(p)
 	w.buf = append(w.buf, p...)
 
@@ -40,6 +46,9 @@ func (w *linePrefixWriter) Write(p []byte) (int, error) {
 
 // Flush writes any remaining buffered content (partial line without trailing newline).
 func (w *linePrefixWriter) Flush() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if len(w.buf) > 0 {
 		_, err := fmt.Fprintf(w.w, "%s %s\n", w.prefix, w.buf)
 		w.buf = nil
