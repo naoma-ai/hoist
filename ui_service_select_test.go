@@ -15,19 +15,19 @@ func TestMultiSelectToggle(t *testing.T) {
 	m := newMultiSelectModel("Pick services", []string{"frontend", "backend", "worker"})
 
 	for i := range m.items {
-		if !m.selected[i] {
-			t.Fatalf("item %d should start selected", i)
+		if m.selected[i] {
+			t.Fatalf("item %d should start unchecked", i)
 		}
 	}
 
 	m, _ = updateMulti(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
-	if m.selected[0] {
-		t.Fatal("item 0 should be deselected after toggle")
+	if !m.selected[0] {
+		t.Fatal("item 0 should be selected after toggle")
 	}
 
 	m, _ = updateMulti(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
-	if !m.selected[0] {
-		t.Fatal("item 0 should be selected after second toggle")
+	if m.selected[0] {
+		t.Fatal("item 0 should be deselected after second toggle")
 	}
 }
 
@@ -54,7 +54,10 @@ func TestMultiSelectCursorBounds(t *testing.T) {
 func TestMultiSelectConfirm(t *testing.T) {
 	m := newMultiSelectModel("Pick", []string{"a", "b", "c"})
 
-	// Deselect "a"
+	// Select "b" and "c" (skip "a")
+	m, _ = updateMulti(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = updateMulti(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	m, _ = updateMulti(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = updateMulti(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
 
 	m, cmd := updateMulti(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -73,8 +76,7 @@ func TestMultiSelectConfirm(t *testing.T) {
 func TestMultiSelectEmptyGuard(t *testing.T) {
 	m := newMultiSelectModel("Pick", []string{"a"})
 
-	m, _ = updateMulti(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
-
+	// All items start unchecked, so enter should be blocked immediately.
 	m, cmd := updateMulti(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("confirm with no selection should return nil cmd")

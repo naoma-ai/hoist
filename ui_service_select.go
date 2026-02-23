@@ -8,7 +8,7 @@ import (
 )
 
 // multiSelectModel lets the user toggle multiple items on/off.
-// All items start selected. Space toggles, enter confirms (>= 1 required).
+// All items start unchecked. Space toggles, enter confirms (>= 1 required).
 type multiSelectModel struct {
 	title     string
 	items     []string
@@ -19,14 +19,10 @@ type multiSelectModel struct {
 }
 
 func newMultiSelectModel(title string, items []string) multiSelectModel {
-	sel := make(map[int]bool, len(items))
-	for i := range items {
-		sel[i] = true
-	}
 	return multiSelectModel{
 		title:    title,
 		items:    items,
-		selected: sel,
+		selected: make(map[int]bool, len(items)),
 	}
 }
 
