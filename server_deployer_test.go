@@ -85,6 +85,23 @@ func TestBuildDockerRunArgs(t *testing.T) {
 	}
 }
 
+func TestBuildDockerRunArgsWithCommand(t *testing.T) {
+	svc := serviceConfig{Image: "myapp/platform", Port: 8080, Healthcheck: "/healthz", Command: "public-api"}
+	ec := envConfig{Host: "api.example.com", EnvFile: "/etc/platform/prod.env"}
+
+	args := buildDockerRunArgs("myapp", "public-api", "main-abc1234-20250101000000", "", svc, ec, "prod")
+
+	// Image:tag should be second-to-last, command should be last.
+	last := args[len(args)-1]
+	if last != "public-api" {
+		t.Errorf("expected last arg to be command %q, got %q", "public-api", last)
+	}
+	secondToLast := args[len(args)-2]
+	if secondToLast != "myapp/platform:main-abc1234-20250101000000" {
+		t.Errorf("expected second-to-last arg to be image:tag, got %q", secondToLast)
+	}
+}
+
 func TestBuildDockerRunArgsEmptyOldTag(t *testing.T) {
 	svc := serviceConfig{Image: "myapp/backend", Port: 8080, Healthcheck: "/health"}
 	ec := envConfig{Host: "api.example.com", EnvFile: "/etc/backend/prod.env"}

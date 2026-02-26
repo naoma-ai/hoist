@@ -24,7 +24,7 @@ type serviceConfig struct {
 	Port        int                  `yaml:"port"`
 	Healthcheck string               `yaml:"healthcheck"`
 	Schedule    string               `yaml:"schedule"` // cron expression (cronjob only)
-	Command     string               `yaml:"command"`  // container entrypoint override (cronjob only, optional)
+	Command     string               `yaml:"command"`  // container command override (optional, server + cronjob)
 	Env         map[string]envConfig `yaml:"env"`
 }
 

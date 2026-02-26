@@ -53,10 +53,13 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 	}
 
 	// Start new container.
+	containerName := service + "-" + tag
 	runArgs := buildDockerRunArgs(d.cfg.Project, service, tag, oldTag, svc, ec, env)
 	runCmd := "docker run " + shellJoin(runArgs)
 	logf("$ docker run --name %s-%s ...", service, tag)
 	if _, err := client.run(ctx, runCmd); err != nil {
+		// Clean up the stopped container so the name is free for retry.
+		client.run(ctx, fmt.Sprintf("docker rm %s", containerName))
 		return fmt.Errorf("starting container: %w", err)
 	}
 	logf("container started")
@@ -71,7 +74,6 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 		timeout = 120 * time.Second
 	}
 
-	containerName := service + "-" + tag
 	logf("waiting for healthcheck (:%d%s, timeout %s)", svc.Port, svc.Healthcheck, timeout)
 	if err := pollHealthcheck(ctx, client, containerName, svc.Port, svc.Healthcheck, interval, timeout); err != nil {
 		logf("healthcheck failed, cleaning up new container")
@@ -141,7 +143,7 @@ func listServiceContainers(ctx context.Context, client sshRunner, service string
 }
 
 func buildDockerRunArgs(project, service, tag, oldTag string, svc serviceConfig, ec envConfig, env string) []string {
-	return []string{
+	args := []string{
 		"-d",
 		"--name", service + "-" + tag,
 		"--restart", "unless-stopped",
@@ -154,6 +156,10 @@ func buildDockerRunArgs(project, service, tag, oldTag string, svc serviceConfig,
 		"--label", fmt.Sprintf("hoist.previous=%s", oldTag),
 		svc.Image + ":" + tag,
 	}
+	if svc.Command != "" {
+		args = append(args, svc.Command)
+	}
+	return args
 }
 
 // shellJoin quotes each argument for safe use in a shell command string.
