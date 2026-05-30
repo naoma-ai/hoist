@@ -40,6 +40,7 @@ func TestCronjobDeployHappyPath(t *testing.T) {
 			{output: ""},                // docker pull
 			{output: existingCrontab},   // crontab -l
 			{output: ""},                // printf | crontab -
+			{output: ""},                // docker image prune
 		},
 	}
 	var dialAddr string
@@ -61,8 +62,12 @@ func TestCronjobDeployHappyPath(t *testing.T) {
 		t.Errorf("expected dial addr 10.0.0.1, got %s", dialAddr)
 	}
 
-	if len(mock.commands) != 3 {
-		t.Fatalf("expected 3 commands, got %d: %v", len(mock.commands), mock.commands)
+	if len(mock.commands) != 4 {
+		t.Fatalf("expected 4 commands, got %d: %v", len(mock.commands), mock.commands)
+	}
+
+	if !strings.Contains(mock.commands[3], "docker image prune") || !strings.Contains(mock.commands[3], "until=168h") {
+		t.Errorf("cmd[3] = %q, want docker image prune with until=168h", mock.commands[3])
 	}
 
 	// 1. docker pull
@@ -101,6 +106,7 @@ func TestCronjobDeployWithOldTag(t *testing.T) {
 			{output: ""},  // docker pull
 			{output: ""},  // crontab -l (empty, first deploy but oldTag provided)
 			{output: ""},  // printf | crontab -
+			{output: ""},  // docker image prune
 		},
 	}
 
@@ -114,8 +120,8 @@ func TestCronjobDeployWithOldTag(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(mock.commands) != 3 {
-		t.Fatalf("expected 3 commands, got %d: %v", len(mock.commands), mock.commands)
+	if len(mock.commands) != 4 {
+		t.Fatalf("expected 4 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	writeCmd := mock.commands[2]
@@ -131,6 +137,7 @@ func TestCronjobDeployFirstDeploy(t *testing.T) {
 			{output: ""},                             // docker pull
 			{output: "", err: fmt.Errorf("no crontab for user")}, // crontab -l fails (first deploy)
 			{output: ""},                             // printf | crontab -
+			{output: ""},                             // docker image prune
 		},
 	}
 
@@ -164,6 +171,7 @@ func TestCronjobDeployAppendsBlock(t *testing.T) {
 			{output: ""},              // docker pull
 			{output: existingCrontab}, // crontab -l
 			{output: ""},              // printf | crontab -
+			{output: ""},              // docker image prune
 		},
 	}
 
@@ -199,6 +207,7 @@ func TestCronjobDeployReplacesBlock(t *testing.T) {
 			{output: ""},              // docker pull
 			{output: existingCrontab}, // crontab -l
 			{output: ""},              // printf | crontab -
+			{output: ""},              // docker image prune
 		},
 	}
 

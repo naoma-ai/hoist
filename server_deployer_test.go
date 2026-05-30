@@ -217,6 +217,7 @@ func TestServerDeployHappyPath(t *testing.T) {
 			{output: "backend-main-abc1234-20250101000000\nbackend-main-old1234-20241231000000"}, // docker ps
 			{}, // docker stop old
 			{}, // docker rm old
+			{}, // docker image prune
 		},
 	}
 	var dialAddr string
@@ -240,9 +241,9 @@ func TestServerDeployHappyPath(t *testing.T) {
 		t.Errorf("expected dial addr 10.0.0.1, got %s", dialAddr)
 	}
 
-	// Expect: pull, run, docker inspect, curl healthcheck, docker ps, stop old, rm old = 7 commands.
-	if len(mock.commands) < 7 {
-		t.Fatalf("expected at least 7 commands, got %d: %v", len(mock.commands), mock.commands)
+	// Expect: pull, run, docker inspect, curl healthcheck, docker ps, stop old, rm old, image prune = 8 commands.
+	if len(mock.commands) < 8 {
+		t.Fatalf("expected at least 8 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	if !strings.HasPrefix(mock.commands[0], "docker pull myapp/backend:main-abc1234-20250101000000") {
@@ -258,13 +259,16 @@ func TestServerDeployHappyPath(t *testing.T) {
 		t.Errorf("cmd[3] = %q, want curl healthcheck", mock.commands[3])
 	}
 
-	// Last two: stop and rm old container.
+	// Last three: stop, rm, prune.
 	n := len(mock.commands)
-	if mock.commands[n-2] != "docker stop backend-main-old1234-20241231000000" {
-		t.Errorf("cmd[%d] = %q, want docker stop old", n-2, mock.commands[n-2])
+	if mock.commands[n-3] != "docker stop backend-main-old1234-20241231000000" {
+		t.Errorf("cmd[%d] = %q, want docker stop old", n-3, mock.commands[n-3])
 	}
-	if mock.commands[n-1] != "docker rm backend-main-old1234-20241231000000" {
-		t.Errorf("cmd[%d] = %q, want docker rm old", n-1, mock.commands[n-1])
+	if mock.commands[n-2] != "docker rm backend-main-old1234-20241231000000" {
+		t.Errorf("cmd[%d] = %q, want docker rm old", n-2, mock.commands[n-2])
+	}
+	if !strings.Contains(mock.commands[n-1], "docker image prune") || !strings.Contains(mock.commands[n-1], "until=168h") {
+		t.Errorf("cmd[%d] = %q, want docker image prune with until=168h", n-1, mock.commands[n-1])
 	}
 }
 
@@ -414,6 +418,7 @@ func TestServerDeploySameTag(t *testing.T) {
 			{output: "backend-main-abc1234-20250101000000\nbackend-main-abc1234-20250101000000-old"}, // docker ps
 			{}, // docker stop old
 			{}, // docker rm old
+			{}, // docker image prune
 		},
 	}
 
@@ -430,9 +435,9 @@ func TestServerDeploySameTag(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Expect: pull, rename, run, docker inspect, curl healthcheck, docker ps, stop old, rm old = 8 commands.
-	if len(mock.commands) < 8 {
-		t.Fatalf("expected at least 8 commands, got %d: %v", len(mock.commands), mock.commands)
+	// Expect: pull, rename, run, docker inspect, curl healthcheck, docker ps, stop old, rm old, image prune = 9 commands.
+	if len(mock.commands) < 9 {
+		t.Fatalf("expected at least 9 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	if !strings.HasPrefix(mock.commands[0], "docker pull") {
@@ -446,13 +451,16 @@ func TestServerDeploySameTag(t *testing.T) {
 		t.Errorf("cmd[2] = %q, want docker run", mock.commands[2])
 	}
 
-	// Last two: stop and rm the renamed container.
+	// Last three: stop, rm the renamed container, prune.
 	n := len(mock.commands)
-	if mock.commands[n-2] != "docker stop backend-main-abc1234-20250101000000-old" {
-		t.Errorf("cmd[%d] = %q, want docker stop -old", n-2, mock.commands[n-2])
+	if mock.commands[n-3] != "docker stop backend-main-abc1234-20250101000000-old" {
+		t.Errorf("cmd[%d] = %q, want docker stop -old", n-3, mock.commands[n-3])
 	}
-	if mock.commands[n-1] != "docker rm backend-main-abc1234-20250101000000-old" {
-		t.Errorf("cmd[%d] = %q, want docker rm -old", n-1, mock.commands[n-1])
+	if mock.commands[n-2] != "docker rm backend-main-abc1234-20250101000000-old" {
+		t.Errorf("cmd[%d] = %q, want docker rm -old", n-2, mock.commands[n-2])
+	}
+	if !strings.Contains(mock.commands[n-1], "docker image prune") || !strings.Contains(mock.commands[n-1], "until=168h") {
+		t.Errorf("cmd[%d] = %q, want docker image prune with until=168h", n-1, mock.commands[n-1])
 	}
 }
 
@@ -467,6 +475,7 @@ func TestServerDeployLogOutput(t *testing.T) {
 			{output: "backend-main-abc1234-20250101000000\nbackend-main-old1234-20241231000000"}, // docker ps
 			{}, // docker stop old
 			{}, // docker rm old
+			{}, // docker image prune
 		},
 	}
 
@@ -497,6 +506,7 @@ func TestServerDeployLogOutput(t *testing.T) {
 		"docker stop",
 		"docker rm",
 		"removed 1 old container(s)",
+		"docker image prune",
 	}
 	for _, e := range expected {
 		if !strings.Contains(output, e) {

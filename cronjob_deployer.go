@@ -57,6 +57,12 @@ func (d *cronjobDeployer) deploy(ctx context.Context, service, env, tag, oldTag 
 	}
 	logf("crontab updated")
 
+	pruneCmd := `docker image prune -af --filter "until=168h"`
+	logf("$ %s", pruneCmd)
+	if _, err := client.run(ctx, pruneCmd); err != nil {
+		logf("warning: image prune failed: %v", err)
+	}
+
 	return nil
 }
 
