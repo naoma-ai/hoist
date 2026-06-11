@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func cronjobTestConfig() config {
@@ -276,6 +279,80 @@ func TestCronjobDeployDialFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "connecting to") {
 		t.Errorf("expected 'connecting to' error, got: %v", err)
+	}
+}
+
+// crontabNode simulates a node's crontab state shared across ssh sessions.
+type crontabNode struct {
+	mu      sync.Mutex
+	crontab string
+}
+
+type crontabSSHRunner struct {
+	node *crontabNode
+}
+
+func (r *crontabSSHRunner) run(_ context.Context, cmd string) (string, error) {
+	switch {
+	case strings.Contains(cmd, "crontab -l"):
+		r.node.mu.Lock()
+		v := r.node.crontab
+		r.node.mu.Unlock()
+		// Widen the read-modify-write window so unserialized deploys interleave.
+		time.Sleep(20 * time.Millisecond)
+		return v, nil
+	case strings.Contains(cmd, "| crontab -"):
+		content := strings.TrimPrefix(cmd, "printf '%s' ")
+		content = strings.TrimSuffix(content, " | crontab -")
+		content = strings.TrimPrefix(content, "'")
+		content = strings.TrimSuffix(content, "'")
+		content = strings.ReplaceAll(content, `'\''`, "'")
+		r.node.mu.Lock()
+		r.node.crontab = content
+		r.node.mu.Unlock()
+		return "", nil
+	}
+	return "", nil
+}
+
+func (r *crontabSSHRunner) stream(_ context.Context, _ string, _ io.Writer) error { return nil }
+func (r *crontabSSHRunner) close() error                                          { return nil }
+
+func TestCronjobDeployParallelSameNode(t *testing.T) {
+	cfg := config{
+		Project: "myapp",
+		Nodes:   map[string]string{"web1": "10.0.0.1"},
+		Services: map[string]serviceConfig{
+			"job-a": {Type: "cronjob", Image: "myapp/a", Schedule: "0 0 * * *", Env: map[string]envConfig{"prod": {Node: "web1", EnvFile: "/etc/a.env"}}},
+			"job-b": {Type: "cronjob", Image: "myapp/b", Schedule: "5 0 * * *", Env: map[string]envConfig{"prod": {Node: "web1", EnvFile: "/etc/b.env"}}},
+		},
+	}
+
+	node := &crontabNode{}
+	d := &cronjobDeployer{
+		cfg:  cfg,
+		dial: func(_ string) (sshRunner, error) { return &crontabSSHRunner{node: node}, nil },
+	}
+
+	var wg sync.WaitGroup
+	for _, svc := range []string{"job-a", "job-b"} {
+		wg.Add(1)
+		go func(svc string) {
+			defer wg.Done()
+			if err := d.deploy(context.Background(), svc, "prod", "main-abc1234-20250101000000", "", nopLogf); err != nil {
+				t.Errorf("deploy %s: %v", svc, err)
+			}
+		}(svc)
+	}
+	wg.Wait()
+
+	node.mu.Lock()
+	final := node.crontab
+	node.mu.Unlock()
+	for _, block := range []string{"hoist:begin job-a-prod", "hoist:begin job-b-prod"} {
+		if !strings.Contains(final, block) {
+			t.Errorf("crontab lost a block, missing %q:\n%s", block, final)
+		}
 	}
 }
 

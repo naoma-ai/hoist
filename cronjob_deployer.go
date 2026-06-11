@@ -6,11 +6,13 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 )
 
 type cronjobDeployer struct {
 	cfg  config
 	dial func(addr string) (sshRunner, error)
+	mu   sync.Mutex // parallel deploys rewrite the whole crontab; serialize read-modify-write
 }
 
 func (d *cronjobDeployer) deploy(ctx context.Context, service, env, tag, oldTag string, logf func(string, ...any)) error {
@@ -35,6 +37,7 @@ func (d *cronjobDeployer) deploy(ctx context.Context, service, env, tag, oldTag 
 
 	// Read existing crontab.
 	blockID := service + "-" + env
+	d.mu.Lock()
 	crontab, _ := client.run(ctx, "crontab -l 2>/dev/null")
 
 	// Determine previous tag.
@@ -55,8 +58,10 @@ func (d *cronjobDeployer) deploy(ctx context.Context, service, env, tag, oldTag 
 	writeCmd := fmt.Sprintf("printf '%%s' %s | crontab -", shellQuote(crontab))
 	logf("writing crontab entry %s", blockID)
 	if _, err := client.run(ctx, writeCmd); err != nil {
+		d.mu.Unlock()
 		return fmt.Errorf("writing crontab: %w", err)
 	}
+	d.mu.Unlock()
 	logf("crontab updated")
 
 	pruneCmd := `docker image prune -af --filter "until=168h"`
