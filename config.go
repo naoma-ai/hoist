@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -25,6 +29,8 @@ type serviceConfig struct {
 	Healthcheck string               `yaml:"healthcheck"`
 	Schedule    string               `yaml:"schedule"` // cron expression (cronjob only)
 	Command     string               `yaml:"command"`  // container command override (optional, server + cronjob)
+	Labels      map[string]string    `yaml:"labels"`   // extra container labels (optional, server + cronjob)
+	Volumes     []string             `yaml:"volumes"`  // extra bind mounts, host:container (optional, server + cronjob)
 	Env         map[string]envConfig `yaml:"env"`
 }
 
@@ -45,7 +51,9 @@ func loadConfig(path string) (config, error) {
 	}
 
 	var cfg config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return config{}, fmt.Errorf("parsing config: %w", err)
 	}
 
@@ -93,6 +101,19 @@ func validateConfig(cfg config) error {
 			}
 			if svc.Healthcheck != "" {
 				return fmt.Errorf("service %q: cronjob must not have healthcheck", name)
+			}
+		case "static":
+			if len(svc.Labels) > 0 {
+				return fmt.Errorf("service %q: static must not have labels", name)
+			}
+			if len(svc.Volumes) > 0 {
+				return fmt.Errorf("service %q: static must not have volumes", name)
+			}
+		}
+
+		for _, v := range svc.Volumes {
+			if !strings.Contains(v, ":") {
+				return fmt.Errorf("service %q: volume %q must be host:container", name, v)
 			}
 		}
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -54,7 +56,7 @@ func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag s
 
 	// Start new container.
 	containerName := service + "-" + tag
-	runArgs := buildDockerRunArgs(d.cfg.Project, service, tag, oldTag, svc, ec, env)
+	runArgs := buildDockerRunArgs(service, env, tag, oldTag, svc, ec)
 	runCmd := "docker run " + shellJoin(runArgs)
 	logf("$ docker run --name %s-%s ...", service, tag)
 	if _, err := client.run(ctx, runCmd); err != nil {
@@ -148,20 +150,30 @@ func listServiceContainers(ctx context.Context, client sshRunner, service string
 	return names, nil
 }
 
-func buildDockerRunArgs(project, service, tag, oldTag string, svc serviceConfig, ec envConfig, env string) []string {
+func buildDockerRunArgs(service, env, tag, oldTag string, svc serviceConfig, ec envConfig) []string {
 	args := []string{
 		"-d",
 		"--name", service + "-" + tag,
 		"--restart", "unless-stopped",
 		"--env-file", ec.EnvFile,
-		"--log-driver", "awslogs",
-		"--log-opt", fmt.Sprintf("awslogs-group=/%s/%s/%s", project, env, service),
 		"--label", "traefik.enable=true",
 		"--label", fmt.Sprintf("traefik.http.routers.%s.rule=Host(`%s`)", service, ec.Host),
 		"--label", fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port=%d", service, svc.Port),
 		"--label", fmt.Sprintf("hoist.previous=%s", oldTag),
-		svc.Image + ":" + tag,
+		"--label", "hoist.service=" + service,
+		"--label", "hoist.env=" + env,
+		"--label", "hoist.tag=" + tag,
+		"--env", "HOIST_SERVICE=" + service,
+		"--env", "HOIST_ENV=" + env,
+		"--env", "HOIST_TAG=" + tag,
 	}
+	for _, k := range slices.Sorted(maps.Keys(svc.Labels)) {
+		args = append(args, "--label", k+"="+svc.Labels[k])
+	}
+	for _, v := range svc.Volumes {
+		args = append(args, "-v", v)
+	}
+	args = append(args, svc.Image+":"+tag)
 	if svc.Command != "" {
 		args = append(args, svc.Command)
 	}

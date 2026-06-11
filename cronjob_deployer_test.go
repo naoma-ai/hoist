@@ -289,7 +289,7 @@ func TestBuildCronLine(t *testing.T) {
 		EnvFile: "/etc/report/prod.env",
 	}
 
-	line := buildCronLine("myapp", "report", "prod", "main-abc1234-20250101000000", svc, ec)
+	line := buildCronLine("report", "prod", "main-abc1234-20250101000000", svc, ec)
 
 	checks := []string{
 		"0 0 * * *",
@@ -297,8 +297,12 @@ func TestBuildCronLine(t *testing.T) {
 		"docker run",
 		"--name report-prod",
 		"--env-file /etc/report/prod.env",
-		"--log-driver=awslogs",
-		"awslogs-group=/myapp/prod/report",
+		"--label hoist.service=report",
+		"--label hoist.env=prod",
+		"--label hoist.tag=main-abc1234-20250101000000",
+		"--env HOIST_SERVICE=report",
+		"--env HOIST_ENV=prod",
+		"--env HOIST_TAG=main-abc1234-20250101000000",
 		"myapp/report:main-abc1234-20250101000000",
 		"/run-report",
 	}
@@ -309,9 +313,44 @@ func TestBuildCronLine(t *testing.T) {
 		}
 	}
 
+	if strings.Contains(line, "awslogs") {
+		t.Errorf("expected no awslogs log driver, got: %s", line)
+	}
+
 	// Should NOT contain "root" user field.
 	if strings.Contains(line, " root ") {
 		t.Errorf("cron line should not contain root user field, got: %s", line)
+	}
+}
+
+func TestBuildCronLineLabelsVolumes(t *testing.T) {
+	svc := serviceConfig{
+		Image:    "myapp/report",
+		Schedule: "0 0 * * *",
+		Labels:   map[string]string{"com.datadoghq.ad.logs": `[{"source":"go","service":"report"}]`},
+		Volumes:  []string{"/var/run/datadog:/var/run/datadog"},
+	}
+	ec := envConfig{
+		EnvFile: "/etc/report/prod.env",
+	}
+
+	line := buildCronLine("report", "prod", "main-abc1234-20250101000000", svc, ec)
+
+	// Config labels and volumes are shell-quoted: the cron line runs through
+	// sh, and label values can contain quotes and glob characters.
+	checks := []string{
+		`--label 'com.datadoghq.ad.logs=[{"source":"go","service":"report"}]'`,
+		`-v '/var/run/datadog:/var/run/datadog'`,
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(line, check) {
+			t.Errorf("expected cron line to contain %q, got: %s", check, line)
+		}
+	}
+
+	if !strings.HasSuffix(line, "myapp/report:main-abc1234-20250101000000") {
+		t.Errorf("expected cron line to end with image:tag, got: %s", line)
 	}
 }
 
@@ -324,7 +363,7 @@ func TestBuildCronLineNoCommand(t *testing.T) {
 		EnvFile: "/etc/report/prod.env",
 	}
 
-	line := buildCronLine("myapp", "report", "prod", "main-abc1234-20250101000000", svc, ec)
+	line := buildCronLine("report", "prod", "main-abc1234-20250101000000", svc, ec)
 
 	// Image:tag should be the last thing on the line (no command after it).
 	if !strings.HasSuffix(line, "myapp/report:main-abc1234-20250101000000") {

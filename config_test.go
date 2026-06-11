@@ -611,3 +611,140 @@ services:
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestLoadConfigUnknownField(t *testing.T) {
+	yaml := `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  api:
+    type: server
+    image: api:latest
+    port: 8080
+    healthcheck: /health
+    bogus: true
+    env:
+      prod:
+        node: n1
+        host: api.com
+        envfile: .env
+`
+	_, err := loadConfig(writeTemp(t, yaml))
+	if err == nil {
+		t.Fatal("expected error for unknown field, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error = %q, want it to mention the unknown field", err.Error())
+	}
+}
+
+func TestLoadConfigLabelsVolumes(t *testing.T) {
+	yaml := `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  api:
+    type: server
+    image: api:latest
+    port: 8080
+    healthcheck: /health
+    labels:
+      com.example.key: value
+    volumes:
+      - /host/path:/container/path
+    env:
+      prod:
+        node: n1
+        host: api.com
+        envfile: .env
+`
+	cfg, err := loadConfig(writeTemp(t, yaml))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	svc := cfg.Services["api"]
+	if diff := cmp.Diff(map[string]string{"com.example.key": "value"}, svc.Labels); diff != "" {
+		t.Errorf("labels mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([]string{"/host/path:/container/path"}, svc.Volumes); diff != "" {
+		t.Errorf("volumes mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLoadConfigLabelsVolumesValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "static with labels",
+			yaml: `
+project: test
+services:
+  web:
+    type: static
+    labels:
+      k: v
+    env:
+      prod:
+        bucket: b
+        cloudfront: E1
+`,
+			wantErr: "static must not have labels",
+		},
+		{
+			name: "static with volumes",
+			yaml: `
+project: test
+services:
+  web:
+    type: static
+    volumes:
+      - /h:/c
+    env:
+      prod:
+        bucket: b
+        cloudfront: E1
+`,
+			wantErr: "static must not have volumes",
+		},
+		{
+			name: "volume without container path",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  api:
+    type: server
+    image: api:latest
+    port: 8080
+    healthcheck: /health
+    volumes:
+      - /host/only
+    env:
+      prod:
+        node: n1
+        host: api.com
+        envfile: .env
+`,
+			wantErr: "must be host:container",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loadConfig(writeTemp(t, tt.yaml))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}

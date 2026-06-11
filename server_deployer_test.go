@@ -56,7 +56,7 @@ func TestBuildDockerRunArgs(t *testing.T) {
 	svc := serviceConfig{Image: "myapp/backend", Port: 8080, Healthcheck: "/health"}
 	ec := envConfig{Host: "api.staging.example.com", EnvFile: "/etc/backend/staging.env"}
 
-	args := buildDockerRunArgs("myapp", "backend", "main-abc1234-20250101000000", "main-old1234-20241231000000", svc, ec, "staging")
+	args := buildDockerRunArgs("backend", "staging", "main-abc1234-20250101000000", "main-old1234-20241231000000", svc, ec)
 	joined := strings.Join(args, " ")
 
 	checks := []string{
@@ -64,18 +64,26 @@ func TestBuildDockerRunArgs(t *testing.T) {
 		"--name backend-main-abc1234-20250101000000",
 		"--restart unless-stopped",
 		"--env-file /etc/backend/staging.env",
-		"--log-driver awslogs",
-		"awslogs-group=/myapp/staging/backend",
 		"traefik.enable=true",
 		"traefik.http.routers.backend.rule=Host(`api.staging.example.com`)",
 		"traefik.http.services.backend.loadbalancer.server.port=8080",
 		"hoist.previous=main-old1234-20241231000000",
+		"--label hoist.service=backend",
+		"--label hoist.env=staging",
+		"--label hoist.tag=main-abc1234-20250101000000",
+		"--env HOIST_SERVICE=backend",
+		"--env HOIST_ENV=staging",
+		"--env HOIST_TAG=main-abc1234-20250101000000",
 	}
 
 	for _, check := range checks {
 		if !strings.Contains(joined, check) {
 			t.Errorf("expected args to contain %q, got: %s", check, joined)
 		}
+	}
+
+	if strings.Contains(joined, "awslogs") {
+		t.Errorf("expected no awslogs log driver, got: %s", joined)
 	}
 
 	// Image:tag must be the last argument.
@@ -89,7 +97,7 @@ func TestBuildDockerRunArgsWithCommand(t *testing.T) {
 	svc := serviceConfig{Image: "myapp/platform", Port: 8080, Healthcheck: "/healthz", Command: "public-api"}
 	ec := envConfig{Host: "api.example.com", EnvFile: "/etc/platform/prod.env"}
 
-	args := buildDockerRunArgs("myapp", "public-api", "main-abc1234-20250101000000", "", svc, ec, "prod")
+	args := buildDockerRunArgs("public-api", "prod", "main-abc1234-20250101000000", "", svc, ec)
 
 	// Image:tag should be second-to-last, command should be last.
 	last := args[len(args)-1]
@@ -106,12 +114,51 @@ func TestBuildDockerRunArgsEmptyOldTag(t *testing.T) {
 	svc := serviceConfig{Image: "myapp/backend", Port: 8080, Healthcheck: "/health"}
 	ec := envConfig{Host: "api.example.com", EnvFile: "/etc/backend/prod.env"}
 
-	args := buildDockerRunArgs("myapp", "backend", "main-abc1234-20250101000000", "", svc, ec, "production")
+	args := buildDockerRunArgs("backend", "production", "main-abc1234-20250101000000", "", svc, ec)
 	joined := strings.Join(args, " ")
 
 	// Label should still be present with empty value.
 	if !strings.Contains(joined, "hoist.previous=") {
 		t.Errorf("expected hoist.previous label, got: %s", joined)
+	}
+}
+
+func TestBuildDockerRunArgsLabelsVolumes(t *testing.T) {
+	svc := serviceConfig{
+		Image:       "myapp/backend",
+		Port:        8080,
+		Healthcheck: "/health",
+		Labels: map[string]string{
+			"com.datadoghq.ad.logs": `[{"source":"go","service":"backend"}]`,
+			"another.label":         "value",
+		},
+		Volumes: []string{"/var/run/datadog:/var/run/datadog"},
+	}
+	ec := envConfig{Host: "api.example.com", EnvFile: "/etc/backend/prod.env"}
+
+	args := buildDockerRunArgs("backend", "prod", "main-abc1234-20250101000000", "", svc, ec)
+	joined := strings.Join(args, " ")
+
+	checks := []string{
+		"--label another.label=value",
+		`--label com.datadoghq.ad.logs=[{"source":"go","service":"backend"}]`,
+		"-v /var/run/datadog:/var/run/datadog",
+	}
+	for _, check := range checks {
+		if !strings.Contains(joined, check) {
+			t.Errorf("expected args to contain %q, got: %s", check, joined)
+		}
+	}
+
+	// Config labels are emitted in sorted key order so deploys are deterministic.
+	if strings.Index(joined, "another.label") > strings.Index(joined, "com.datadoghq.ad.logs") {
+		t.Errorf("expected labels in sorted key order, got: %s", joined)
+	}
+
+	// Image:tag must come after labels and volumes.
+	last := args[len(args)-1]
+	if last != "myapp/backend:main-abc1234-20250101000000" {
+		t.Errorf("expected last arg to be image:tag, got %q", last)
 	}
 }
 

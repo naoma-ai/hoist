@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -45,7 +47,7 @@ func (d *cronjobDeployer) deploy(ctx context.Context, service, env, tag, oldTag 
 	}
 
 	// Build the new block.
-	cronLine := buildCronLine(d.cfg.Project, service, env, tag, svc, ec)
+	cronLine := buildCronLine(service, env, tag, svc, ec)
 	newBlock := fmt.Sprintf("# hoist:begin %s\n# hoist:tag=%s\n# hoist:previous=%s\n%s\n# hoist:end %s", blockID, tag, previous, cronLine, blockID)
 	crontab = replaceCrontabBlock(crontab, blockID, newBlock)
 
@@ -66,7 +68,7 @@ func (d *cronjobDeployer) deploy(ctx context.Context, service, env, tag, oldTag 
 	return nil
 }
 
-func buildCronLine(project, service, env, tag string, svc serviceConfig, ec envConfig) string {
+func buildCronLine(service, env, tag string, svc serviceConfig, ec envConfig) string {
 	containerName := service + "-" + env
 
 	var parts []string
@@ -77,11 +79,20 @@ func buildCronLine(project, service, env, tag string, svc serviceConfig, ec envC
 		"docker", "run",
 		"--name", containerName,
 		"--env-file", ec.EnvFile,
-		"--log-driver=awslogs",
-		"--log-opt", fmt.Sprintf("awslogs-region=us-east-1"),
-		"--log-opt", fmt.Sprintf("awslogs-group=/%s/%s/%s", project, env, service),
-		fmt.Sprintf("%s:%s", svc.Image, tag),
+		"--label", "hoist.service=" + service,
+		"--label", "hoist.env=" + env,
+		"--label", "hoist.tag=" + tag,
+		"--env", "HOIST_SERVICE=" + service,
+		"--env", "HOIST_ENV=" + env,
+		"--env", "HOIST_TAG=" + tag,
 	}
+	for _, k := range slices.Sorted(maps.Keys(svc.Labels)) {
+		runArgs = append(runArgs, "--label", shellQuote(k+"="+svc.Labels[k]))
+	}
+	for _, v := range svc.Volumes {
+		runArgs = append(runArgs, "-v", shellQuote(v))
+	}
+	runArgs = append(runArgs, fmt.Sprintf("%s:%s", svc.Image, tag))
 
 	if svc.Command != "" {
 		runArgs = append(runArgs, svc.Command)
