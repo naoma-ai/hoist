@@ -111,6 +111,61 @@ func (m *mockDeployer) deploy(ctx context.Context, service, env, tag, oldTag str
 
 func nopLogf(string, ...any) {}
 
+// recordingRunner records commands run per node address, for prune assertions.
+type recordingRunner struct {
+	addr string
+	mu   *sync.Mutex
+	log  map[string][]string
+}
+
+func (r *recordingRunner) run(_ context.Context, cmd string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.log[r.addr] = append(r.log[r.addr], cmd)
+	return "", nil
+}
+func (r *recordingRunner) stream(_ context.Context, _ string, _ io.Writer) error { return nil }
+func (r *recordingRunner) close() error                                          { return nil }
+
+func TestDeployPrunesEachNodeOnce(t *testing.T) {
+	cfg := testConfig()
+	md := &mockDeployer{}
+	bp := &mockBuildsProvider{}
+	mh := &mockHistoryProvider{}
+
+	var mu sync.Mutex
+	pruned := map[string][]string{}
+	p := providers{
+		builds:    map[string]buildsProvider{"backend": bp, "frontend": bp, "report": bp},
+		deployers: map[string]deployer{"server": md, "static": md, "cronjob": md},
+		history:   map[string]historyProvider{"server": mh, "static": mh, "cronjob": mh},
+		dial: func(addr string) (sshRunner, error) {
+			return &recordingRunner{addr: addr, mu: &mu, log: pruned}, nil
+		},
+	}
+
+	tag := "main-abc1234-20250101000000"
+	tags := map[string]string{"backend": tag, "frontend": tag, "report": tag}
+	err := deployAllWithLog(context.Background(), cfg, p,
+		[]string{"backend", "frontend", "report"}, "staging", tags, nil, io.Discard, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// backend and report both run on web1 (10.0.0.1) → pruned once; frontend is
+	// static (no node) → not pruned.
+	if len(pruned) != 1 {
+		t.Fatalf("expected prune on exactly 1 node, got %d: %v", len(pruned), pruned)
+	}
+	cmds, ok := pruned["10.0.0.1"]
+	if !ok {
+		t.Fatalf("expected prune on web1 (10.0.0.1), got %v", pruned)
+	}
+	if len(cmds) != 1 || !strings.Contains(cmds[0], "docker image prune") || !strings.Contains(cmds[0], "until=168h") {
+		t.Errorf("expected one image-prune command on web1, got %v", cmds)
+	}
+}
+
 func testConfig() config {
 	return config{
 		Project: "myapp",

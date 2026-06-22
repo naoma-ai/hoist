@@ -65,6 +65,7 @@ type providers struct {
 	deployers map[string]deployer
 	history   map[string]historyProvider
 	logs      map[string]logsProvider
+	dial      func(addr string) (sshRunner, error)
 }
 
 type deployOpts struct {
@@ -84,7 +85,7 @@ type deployResult struct {
 type rollbackChoice int
 
 const (
-	rollbackAll    rollbackChoice = iota
+	rollbackAll rollbackChoice = iota
 	rollbackNone
 	rollbackFailed
 )
@@ -284,6 +285,8 @@ func deployAllWithLog(ctx context.Context, cfg config, p providers, services []s
 	}
 	duration := time.Since(start)
 
+	pruneNodes(ctx, cfg, p, services, env, w, &mu, padLen)
+
 	if len(result.failed) == 0 {
 		fmt.Fprintln(w, "Deploy complete!")
 		if cfg.Hooks.PostDeploy != "" {
@@ -408,6 +411,50 @@ func deployService(ctx context.Context, cfg config, p providers, service, env, t
 	return d.deploy(ctx, service, env, tag, oldTag, logf)
 }
 
+// pruneImagesCmd removes images unused for over a week.
+const pruneImagesCmd = `docker image prune -af --filter "until=168h"`
+
+// pruneNodes reclaims disk on every node a deploy touched, once each, after
+// all deploys have settled. It must not run mid-deploy: the containerd GC it
+// triggers corrupts in-flight image pulls on the same node (concurrent pulls
+// then fail with "lease does not exist" / missing-layer errors).
+func pruneNodes(ctx context.Context, cfg config, p providers, services []string, env string, w io.Writer, mu *sync.Mutex, padLen int) {
+	if p.dial == nil {
+		return
+	}
+
+	seen := map[string]bool{}
+	var addrs []string
+	for _, svc := range services {
+		ec, ok := cfg.Services[svc].Env[env]
+		if !ok {
+			continue
+		}
+		addr := cfg.Nodes[ec.Node]
+		if addr == "" || seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		addrs = append(addrs, addr)
+	}
+	if len(addrs) == 0 {
+		return
+	}
+
+	logf := newServiceLogf(w, mu, "prune", padLen)
+	for _, addr := range addrs {
+		client, err := p.dial(addr)
+		if err != nil {
+			logf("warning: prune dial %s: %v", addr, err)
+			continue
+		}
+		logf("$ %s (%s)", pruneImagesCmd, addr)
+		if _, err := client.run(ctx, pruneImagesCmd); err != nil {
+			logf("warning: image prune failed on %s: %v", addr, err)
+		}
+		client.close()
+	}
+}
 
 func resolveBuildTag(ctx context.Context, bp buildsProvider, value string) (string, error) {
 	if _, err := parseTag(value); err == nil {

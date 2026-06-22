@@ -90,5 +90,6 @@ func newProviders(ctx context.Context, cfg config) (providers, error) {
 			"static":  &staticLogsProvider{},
 			"cronjob": &cronjobLogsProvider{cfg: cfg, dial: dial},
 		},
+		dial: dial,
 	}, nil
 }

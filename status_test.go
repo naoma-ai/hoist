@@ -11,12 +11,12 @@ import (
 func TestGetStatusAllServices(t *testing.T) {
 	cfg := testConfig()
 	deploys := map[string]deploy{
-		"backend:staging":      {Service: "backend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 3 * time.Hour},
-		"backend:production":   {Service: "backend", Env: "production", Tag: "main-def5678-20241231000000", Uptime: 48 * time.Hour},
-		"frontend:staging":     {Service: "frontend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 1 * time.Hour},
-		"frontend:production":  {Service: "frontend", Env: "production", Tag: "main-def5678-20241231000000", Uptime: 24 * time.Hour},
-		"report:staging":       {Service: "report", Env: "staging", Tag: "main-abc1234-20250101000000"},
-		"report:production":    {Service: "report", Env: "production", Tag: "main-def5678-20241231000000"},
+		"backend:staging":     {Service: "backend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 3 * time.Hour},
+		"backend:production":  {Service: "backend", Env: "production", Tag: "main-def5678-20241231000000", Uptime: 48 * time.Hour},
+		"frontend:staging":    {Service: "frontend", Env: "staging", Tag: "main-abc1234-20250101000000", Uptime: 1 * time.Hour},
+		"frontend:production": {Service: "frontend", Env: "production", Tag: "main-def5678-20241231000000", Uptime: 24 * time.Hour},
+		"report:staging":      {Service: "report", Env: "staging", Tag: "main-abc1234-20250101000000"},
+		"report:production":   {Service: "report", Env: "production", Tag: "main-def5678-20241231000000"},
 	}
 	p, _ := testProviders(nil, deploys)
 

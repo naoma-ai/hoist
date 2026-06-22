@@ -19,7 +19,7 @@ type stubS3Object struct {
 
 type stubS3 struct {
 	objects map[string]stubS3Object // keyed by "bucket/key"
-	err     error                  // global error to return
+	err     error                   // global error to return
 }
 
 func (s *stubS3) GetObject(_ context.Context, params *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {

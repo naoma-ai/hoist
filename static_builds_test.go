@@ -149,8 +149,8 @@ func TestStaticBuildsPagination(t *testing.T) {
 	stub := &stubS3List{
 		pages: []s3.ListObjectsV2Output{
 			{
-				CommonPrefixes: prefixes("main-abc1234-20250101100000"),
-				IsTruncated:    aws.Bool(true),
+				CommonPrefixes:        prefixes("main-abc1234-20250101100000"),
+				IsTruncated:           aws.Bool(true),
 				NextContinuationToken: aws.String("page2"),
 			},
 			{

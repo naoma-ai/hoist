@@ -12,7 +12,7 @@ func TestCronjobLogsTailHappyPath(t *testing.T) {
 	cfg := cronjobTestConfig()
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{output: "report-prod"},         // docker ps -a
+			{output: "report-prod"},              // docker ps -a
 			{output: "log line 1\nlog line 2\n"}, // docker logs (streamed)
 		},
 	}
