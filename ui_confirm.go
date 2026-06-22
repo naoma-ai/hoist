@@ -10,7 +10,7 @@ import (
 type confirmResult int
 
 const (
-	confirmPending  confirmResult = iota
+	confirmPending confirmResult = iota
 	confirmAccepted
 	confirmRejected
 )

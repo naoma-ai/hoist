@@ -187,7 +187,7 @@ func TestPollHealthcheckImmediateSuccess(t *testing.T) {
 func TestPollHealthcheckEventualSuccess(t *testing.T) {
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{output: "172.17.0.2"},        // docker inspect
+			{output: "172.17.0.2"},         // docker inspect
 			{err: fmt.Errorf("unhealthy")}, // curl 1
 			{err: fmt.Errorf("unhealthy")}, // curl 2
 			{err: fmt.Errorf("unhealthy")}, // curl 3
@@ -257,14 +257,13 @@ func TestServerDeployHappyPath(t *testing.T) {
 	cfg := testConfig()
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{},                      // docker pull
-			{},                      // docker run
-			{output: "172.17.0.2"},  // docker inspect
-			{output: "OK"},          // curl healthcheck
+			{},                     // docker pull
+			{},                     // docker run
+			{output: "172.17.0.2"}, // docker inspect
+			{output: "OK"},         // curl healthcheck
 			{output: "backend-main-abc1234-20250101000000\nbackend-main-old1234-20241231000000"}, // docker ps
 			{}, // docker stop old
 			{}, // docker rm old
-			{}, // docker image prune
 		},
 	}
 	var dialAddr string
@@ -288,9 +287,10 @@ func TestServerDeployHappyPath(t *testing.T) {
 		t.Errorf("expected dial addr 10.0.0.1, got %s", dialAddr)
 	}
 
-	// Expect: pull, run, docker inspect, curl healthcheck, docker ps, stop old, rm old, image prune = 8 commands.
-	if len(mock.commands) < 8 {
-		t.Fatalf("expected at least 8 commands, got %d: %v", len(mock.commands), mock.commands)
+	// Expect: pull, run, docker inspect, curl healthcheck, docker ps, stop old, rm old = 7 commands.
+	// Image prune is no longer per-service — it runs once per node after all deploys.
+	if len(mock.commands) < 7 {
+		t.Fatalf("expected at least 7 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	if !strings.HasPrefix(mock.commands[0], "docker pull myapp/backend:main-abc1234-20250101000000") {
@@ -306,16 +306,19 @@ func TestServerDeployHappyPath(t *testing.T) {
 		t.Errorf("cmd[3] = %q, want curl healthcheck", mock.commands[3])
 	}
 
-	// Last three: stop, rm, prune.
+	for _, cmd := range mock.commands {
+		if strings.Contains(cmd, "docker image prune") {
+			t.Errorf("server deploy should not prune images per-service, got: %s", cmd)
+		}
+	}
+
+	// Last two: stop, rm old.
 	n := len(mock.commands)
-	if mock.commands[n-3] != "docker stop backend-main-old1234-20241231000000" {
-		t.Errorf("cmd[%d] = %q, want docker stop old", n-3, mock.commands[n-3])
+	if mock.commands[n-2] != "docker stop backend-main-old1234-20241231000000" {
+		t.Errorf("cmd[%d] = %q, want docker stop old", n-2, mock.commands[n-2])
 	}
-	if mock.commands[n-2] != "docker rm backend-main-old1234-20241231000000" {
-		t.Errorf("cmd[%d] = %q, want docker rm old", n-2, mock.commands[n-2])
-	}
-	if !strings.Contains(mock.commands[n-1], "docker image prune") || !strings.Contains(mock.commands[n-1], "until=168h") {
-		t.Errorf("cmd[%d] = %q, want docker image prune with until=168h", n-1, mock.commands[n-1])
+	if mock.commands[n-1] != "docker rm backend-main-old1234-20241231000000" {
+		t.Errorf("cmd[%d] = %q, want docker rm old", n-1, mock.commands[n-1])
 	}
 }
 
@@ -374,20 +377,20 @@ func TestServerDeployHealthcheckFailure(t *testing.T) {
 	cfg := testConfig()
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{output: ""},                             // docker pull
-			{output: "container-id"},                 // docker run
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 1
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 2
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 3
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 4
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 5
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 6
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 7
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 8
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 9
-			{err: fmt.Errorf("unhealthy")},           // healthcheck 10
-			{output: ""},                             // docker stop new (cleanup)
-			{output: ""},                             // docker rm new (cleanup)
+			{output: ""},                   // docker pull
+			{output: "container-id"},       // docker run
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 1
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 2
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 3
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 4
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 5
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 6
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 7
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 8
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 9
+			{err: fmt.Errorf("unhealthy")}, // healthcheck 10
+			{output: ""},                   // docker stop new (cleanup)
+			{output: ""},                   // docker rm new (cleanup)
 		},
 	}
 
@@ -457,15 +460,14 @@ func TestServerDeploySameTag(t *testing.T) {
 	cfg := testConfig()
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{},                      // docker pull
-			{},                      // docker rename
-			{},                      // docker run
-			{output: "172.17.0.2"},  // docker inspect
-			{output: "OK"},          // curl healthcheck
+			{},                     // docker pull
+			{},                     // docker rename
+			{},                     // docker run
+			{output: "172.17.0.2"}, // docker inspect
+			{output: "OK"},         // curl healthcheck
 			{output: "backend-main-abc1234-20250101000000\nbackend-main-abc1234-20250101000000-old"}, // docker ps
 			{}, // docker stop old
 			{}, // docker rm old
-			{}, // docker image prune
 		},
 	}
 
@@ -482,9 +484,9 @@ func TestServerDeploySameTag(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Expect: pull, rename, run, docker inspect, curl healthcheck, docker ps, stop old, rm old, image prune = 9 commands.
-	if len(mock.commands) < 9 {
-		t.Fatalf("expected at least 9 commands, got %d: %v", len(mock.commands), mock.commands)
+	// Expect: pull, rename, run, docker inspect, curl healthcheck, docker ps, stop old, rm old = 8 commands.
+	if len(mock.commands) < 8 {
+		t.Fatalf("expected at least 8 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	if !strings.HasPrefix(mock.commands[0], "docker pull") {
@@ -498,16 +500,13 @@ func TestServerDeploySameTag(t *testing.T) {
 		t.Errorf("cmd[2] = %q, want docker run", mock.commands[2])
 	}
 
-	// Last three: stop, rm the renamed container, prune.
+	// Last two: stop, rm the renamed container.
 	n := len(mock.commands)
-	if mock.commands[n-3] != "docker stop backend-main-abc1234-20250101000000-old" {
-		t.Errorf("cmd[%d] = %q, want docker stop -old", n-3, mock.commands[n-3])
+	if mock.commands[n-2] != "docker stop backend-main-abc1234-20250101000000-old" {
+		t.Errorf("cmd[%d] = %q, want docker stop -old", n-2, mock.commands[n-2])
 	}
-	if mock.commands[n-2] != "docker rm backend-main-abc1234-20250101000000-old" {
-		t.Errorf("cmd[%d] = %q, want docker rm -old", n-2, mock.commands[n-2])
-	}
-	if !strings.Contains(mock.commands[n-1], "docker image prune") || !strings.Contains(mock.commands[n-1], "until=168h") {
-		t.Errorf("cmd[%d] = %q, want docker image prune with until=168h", n-1, mock.commands[n-1])
+	if mock.commands[n-1] != "docker rm backend-main-abc1234-20250101000000-old" {
+		t.Errorf("cmd[%d] = %q, want docker rm -old", n-1, mock.commands[n-1])
 	}
 }
 
@@ -515,14 +514,13 @@ func TestServerDeployLogOutput(t *testing.T) {
 	cfg := testConfig()
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
-			{},                      // docker pull
-			{},                      // docker run
-			{output: "172.17.0.2"},  // docker inspect
-			{output: "OK"},          // curl healthcheck
+			{},                     // docker pull
+			{},                     // docker run
+			{output: "172.17.0.2"}, // docker inspect
+			{output: "OK"},         // curl healthcheck
 			{output: "backend-main-abc1234-20250101000000\nbackend-main-old1234-20241231000000"}, // docker ps
 			{}, // docker stop old
 			{}, // docker rm old
-			{}, // docker image prune
 		},
 	}
 
@@ -553,7 +551,6 @@ func TestServerDeployLogOutput(t *testing.T) {
 		"docker stop",
 		"docker rm",
 		"removed 1 old container(s)",
-		"docker image prune",
 	}
 	for _, e := range expected {
 		if !strings.Contains(output, e) {

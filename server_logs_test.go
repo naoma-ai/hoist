@@ -14,7 +14,7 @@ func TestServerLogsTailFindsContainer(t *testing.T) {
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
 			{output: "backend-main-abc1234-20250101000000"}, // docker ps
-			{output: "some log output"},                    // docker logs (stream)
+			{output: "some log output"},                     // docker logs (stream)
 		},
 	}
 	var dialAddr string
