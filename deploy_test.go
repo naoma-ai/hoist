@@ -399,8 +399,8 @@ func TestAllEnvironments(t *testing.T) {
 	if len(envs) != 2 {
 		t.Fatalf("expected 2 envs, got %d: %v", len(envs), envs)
 	}
-	if envs[0] != "production" || envs[1] != "staging" {
-		t.Fatalf("expected [production staging], got %v", envs)
+	if envs[0] != "staging" || envs[1] != "production" {
+		t.Fatalf("expected [staging production], got %v", envs)
 	}
 }
 
@@ -415,8 +415,8 @@ func TestAllEnvironmentsMixed(t *testing.T) {
 	if len(envs) != 2 {
 		t.Fatalf("expected 2 envs, got %d: %v", len(envs), envs)
 	}
-	if envs[0] != "production" || envs[1] != "staging" {
-		t.Fatalf("expected [production staging], got %v", envs)
+	if envs[0] != "staging" || envs[1] != "production" {
+		t.Fatalf("expected [staging production], got %v", envs)
 	}
 }
 
