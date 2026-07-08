@@ -449,8 +449,22 @@ func allEnvironments(cfg config) []string {
 	for env := range seen {
 		result = append(result, env)
 	}
-	sort.Strings(result)
+	// Sort alphabetically, but push production environments to the end so a
+	// safer environment (e.g. staging) is the default selection.
+	sort.Slice(result, func(i, j int) bool {
+		pi, pj := isProdEnv(result[i]), isProdEnv(result[j])
+		if pi != pj {
+			return pj
+		}
+		return result[i] < result[j]
+	})
 	return result
+}
+
+// isProdEnv reports whether env is a production environment.
+func isProdEnv(env string) bool {
+	e := strings.ToLower(env)
+	return e == "prod" || e == "production"
 }
 
 func servicesWithEnv(cfg config, env string) []string {
