@@ -20,11 +20,11 @@ services:
     healthcheck: /health
     env:
       staging:
-        node: web1
+        nodes: [web1]
         host: api.staging.example.com
         envfile: /etc/backend/staging.env
       production:
-        node: web2
+        nodes: [web2]
         host: api.example.com
         envfile: /etc/backend/production.env
   frontend:
@@ -78,7 +78,7 @@ services:
     healthcheck: /h
     env:
       staging:
-        node: n1
+        nodes: [n1]
         host: a.com
         envfile: .env
   svc2:
@@ -88,7 +88,7 @@ services:
     healthcheck: /h
     env:
       production:
-        node: n1
+        nodes: [n1]
         host: b.com
         envfile: .env
 `

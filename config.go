@@ -36,9 +36,10 @@ type serviceConfig struct {
 
 type envConfig struct {
 	// Server + cronjob fields
-	Node    string `yaml:"node"`
-	Host    string `yaml:"host"` // server only
-	EnvFile string `yaml:"envfile"`
+	Nodes   []string `yaml:"nodes"` // server only, deploy order
+	Node    string   `yaml:"node"`  // cronjob only
+	Host    string   `yaml:"host"`  // server only
+	EnvFile string   `yaml:"envfile"`
 	// Static fields
 	Bucket     string `yaml:"bucket"`
 	CloudFront string `yaml:"cloudfront"`
@@ -124,11 +125,16 @@ func validateConfig(cfg config) error {
 		for envName, env := range svc.Env {
 			switch svc.Type {
 			case "server":
-				if env.Node == "" {
-					return fmt.Errorf("service %q env %q: missing node", name, envName)
+				if env.Node != "" {
+					return fmt.Errorf("service %q env %q: server uses nodes, not node", name, envName)
 				}
-				if _, ok := cfg.Nodes[env.Node]; !ok {
-					return fmt.Errorf("service %q env %q: node %q not defined in nodes", name, envName, env.Node)
+				if len(env.Nodes) == 0 {
+					return fmt.Errorf("service %q env %q: missing nodes", name, envName)
+				}
+				for _, node := range env.Nodes {
+					if _, ok := cfg.Nodes[node]; !ok {
+						return fmt.Errorf("service %q env %q: node %q not defined in nodes", name, envName, node)
+					}
 				}
 				if env.Host == "" {
 					return fmt.Errorf("service %q env %q: missing host", name, envName)
@@ -144,6 +150,9 @@ func validateConfig(cfg config) error {
 					return fmt.Errorf("service %q env %q: missing cloudfront", name, envName)
 				}
 			case "cronjob":
+				if len(env.Nodes) > 0 {
+					return fmt.Errorf("service %q env %q: cronjob uses node, not nodes", name, envName)
+				}
 				if env.Node == "" {
 					return fmt.Errorf("service %q env %q: missing node", name, envName)
 				}

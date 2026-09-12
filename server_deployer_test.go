@@ -510,6 +510,83 @@ func TestServerDeploySameTag(t *testing.T) {
 	}
 }
 
+func twoNodeConfig() config {
+	cfg := testConfig()
+	cfg.Services["backend"].Env["production"] = envConfig{
+		Nodes:   []string{"web1", "web2"},
+		Host:    "api.example.com",
+		EnvFile: "/etc/backend/production.env",
+	}
+	return cfg
+}
+
+func TestServerDeployEachNodeInOrder(t *testing.T) {
+	cfg := twoNodeConfig()
+	var dialed []string
+	runners := map[string]*mockSSHRunner{}
+
+	d := &serverDeployer{
+		cfg: cfg,
+		dial: func(addr string) (sshRunner, error) {
+			dialed = append(dialed, addr)
+			m := &mockSSHRunner{
+				responses: []mockRunResult{
+					{},                     // docker pull
+					{},                     // docker run
+					{output: "172.17.0.2"}, // docker inspect
+					{output: "OK"},         // curl healthcheck
+					{output: "backend-main-abc1234-20250101000000\nbackend-main-old1234-20241231000000"}, // docker ps
+					{}, // docker stop old
+					{}, // docker rm old
+				},
+			}
+			runners[addr] = m
+			return m, nil
+		},
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  1 * time.Second,
+	}
+
+	err := d.deploy(context.Background(), "backend", "production", "main-abc1234-20250101000000", "main-old1234-20241231000000", nopLogf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if strings.Join(dialed, ",") != "10.0.0.1,10.0.0.2" {
+		t.Fatalf("expected nodes in config order, dialed %v", dialed)
+	}
+	for addr, m := range runners {
+		n := len(m.commands)
+		if n < 7 || !strings.HasPrefix(m.commands[1], "docker run") || m.commands[n-2] != "docker stop backend-main-old1234-20241231000000" {
+			t.Errorf("%s: expected a full run/stop-old sequence, got %v", addr, m.commands)
+		}
+	}
+}
+
+func TestServerDeployStopsAtFailedNode(t *testing.T) {
+	cfg := twoNodeConfig()
+	var dialed []string
+
+	d := &serverDeployer{
+		cfg: cfg,
+		dial: func(addr string) (sshRunner, error) {
+			dialed = append(dialed, addr)
+			return &mockSSHRunner{responses: []mockRunResult{{err: fmt.Errorf("pull access denied")}}}, nil
+		},
+	}
+
+	err := d.deploy(context.Background(), "backend", "production", "main-abc1234-20250101000000", "old-tag", nopLogf)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.HasPrefix(err.Error(), "web1: ") {
+		t.Errorf("expected the error to name the node, got: %v", err)
+	}
+	if len(dialed) != 1 {
+		t.Errorf("expected the second node to be left alone, dialed %v", dialed)
+	}
+}
+
 func TestServerDeployLogOutput(t *testing.T) {
 	cfg := testConfig()
 	mock := &mockSSHRunner{

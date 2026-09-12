@@ -430,12 +430,18 @@ func pruneNodes(ctx context.Context, cfg config, p providers, services []string,
 		if !ok {
 			continue
 		}
-		addr := cfg.Nodes[ec.Node]
-		if addr == "" || seen[addr] {
-			continue
+		nodes := ec.Nodes
+		if ec.Node != "" {
+			nodes = []string{ec.Node}
 		}
-		seen[addr] = true
-		addrs = append(addrs, addr)
+		for _, node := range nodes {
+			addr := cfg.Nodes[node]
+			if addr == "" || seen[addr] {
+				continue
+			}
+			seen[addr] = true
+			addrs = append(addrs, addr)
+		}
 	}
 	if len(addrs) == 0 {
 		return

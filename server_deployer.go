@@ -26,9 +26,26 @@ type serverDeployer struct {
 func (d *serverDeployer) deploy(ctx context.Context, service, env, tag, oldTag string, logf func(string, ...any)) error {
 	svc := d.cfg.Services[service]
 	ec := svc.Env[env]
-	addr := d.cfg.Nodes[ec.Node]
 
-	logf("connecting to %s (%s)", ec.Node, addr)
+	for _, node := range ec.Nodes {
+		nlogf := logf
+		if len(ec.Nodes) > 1 {
+			nlogf = func(format string, args ...any) { logf(node+": "+format, args...) }
+		}
+		if err := d.deployNode(ctx, node, service, env, tag, oldTag, svc, ec, nlogf); err != nil {
+			if len(ec.Nodes) > 1 {
+				return fmt.Errorf("%s: %w", node, err)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *serverDeployer) deployNode(ctx context.Context, node, service, env, tag, oldTag string, svc serviceConfig, ec envConfig, logf func(string, ...any)) error {
+	addr := d.cfg.Nodes[node]
+
+	logf("connecting to %s (%s)", node, addr)
 	client, err := d.dial(addr)
 	if err != nil {
 		return fmt.Errorf("connecting to %s: %w", addr, err)

@@ -14,7 +14,7 @@ type serverHistoryProvider struct {
 
 func (p *serverHistoryProvider) current(ctx context.Context, service, env string) (deploy, error) {
 	svc := p.cfg.Services[service]
-	addr := p.cfg.Nodes[svc.Env[env].Node]
+	addr := p.cfg.Nodes[svc.Env[env].Nodes[0]]
 
 	cmd := fmt.Sprintf(`docker ps --filter "name=%s-" --format "{{.Names}}\t{{.Status}}"`, service)
 	out, err := p.run(ctx, addr, cmd)
@@ -50,7 +50,7 @@ func (p *serverHistoryProvider) current(ctx context.Context, service, env string
 
 func (p *serverHistoryProvider) previous(ctx context.Context, service, env string) (deploy, error) {
 	svc := p.cfg.Services[service]
-	addr := p.cfg.Nodes[svc.Env[env].Node]
+	addr := p.cfg.Nodes[svc.Env[env].Nodes[0]]
 
 	// Find the running container name.
 	psCmd := fmt.Sprintf(`docker ps --filter "name=%s-" --format "{{.Names}}"`, service)

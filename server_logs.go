@@ -15,7 +15,7 @@ type serverLogsProvider struct {
 func (p *serverLogsProvider) tail(ctx context.Context, service, env string, n int, since string, w io.Writer) error {
 	svc := p.cfg.Services[service]
 	ec := svc.Env[env]
-	addr := p.cfg.Nodes[ec.Node]
+	addr := p.cfg.Nodes[ec.Nodes[0]]
 
 	client, err := p.dial(addr)
 	if err != nil {

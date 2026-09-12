@@ -38,11 +38,11 @@ services:
     healthcheck: /health
     env:
       production:
-        node: prod1
+        nodes: [prod1]
         host: api.example.com
         envfile: .env.prod
       staging:
-        node: staging1
+        nodes: [staging1]
         host: api.staging.example.com
         envfile: .env.staging
   web:
@@ -76,8 +76,8 @@ services:
 				Port:        8080,
 				Healthcheck: "/health",
 				Env: map[string]envConfig{
-					"production": {Node: "prod1", Host: "api.example.com", EnvFile: ".env.prod"},
-					"staging":    {Node: "staging1", Host: "api.staging.example.com", EnvFile: ".env.staging"},
+					"production": {Nodes: []string{"prod1"}, Host: "api.example.com", EnvFile: ".env.prod"},
+					"staging":    {Nodes: []string{"staging1"}, Host: "api.staging.example.com", EnvFile: ".env.staging"},
 				},
 			},
 			"web": {
@@ -114,7 +114,7 @@ services:
     healthcheck: /health
     env:
       prod:
-        node: n1
+        nodes: [n1]
         host: api.com
         envfile: .env
 `,
@@ -133,7 +133,7 @@ services:
     healthcheck: /health
     env:
       prod:
-        node: n1
+        nodes: [n1]
         host: api.com
         envfile: .env
 `,
@@ -152,7 +152,7 @@ services:
     port: 8080
     env:
       prod:
-        node: n1
+        nodes: [n1]
         host: api.com
         envfile: .env
 `,
@@ -212,7 +212,7 @@ services:
     healthcheck: /health
     env:
       prod:
-        node: n1
+        nodes: [n1]
         envfile: .env
 `,
 			wantErr: "missing host",
@@ -231,10 +231,116 @@ services:
     healthcheck: /health
     env:
       prod:
-        node: n1
+        nodes: [n1]
         host: api.com
 `,
 			wantErr: "missing envfile",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loadConfig(writeTemp(t, tt.yaml))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadConfigNodesList(t *testing.T) {
+	yaml := `
+project: test
+nodes:
+  n1: 10.0.0.1
+  n2: 10.0.0.2
+services:
+  api:
+    type: server
+    image: api:latest
+    port: 8080
+    healthcheck: /health
+    env:
+      prod:
+        nodes: [n1, n2]
+        host: api.com
+        envfile: .env
+`
+	cfg, err := loadConfig(writeTemp(t, yaml))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if diff := cmp.Diff([]string{"n1", "n2"}, cfg.Services["api"].Env["prod"].Nodes); diff != "" {
+		t.Errorf("nodes mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLoadConfigNodeFieldByType(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "server with node",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  api:
+    type: server
+    image: api:latest
+    port: 8080
+    healthcheck: /health
+    env:
+      prod:
+        node: n1
+        host: api.com
+        envfile: .env
+`,
+			wantErr: "server uses nodes",
+		},
+		{
+			name: "cronjob with nodes",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  report:
+    type: cronjob
+    image: myapp/report
+    schedule: "0 0 * * *"
+    env:
+      prod:
+        nodes: [n1]
+        envfile: .env
+`,
+			wantErr: "cronjob uses node",
+		},
+		{
+			name: "undefined node in list",
+			yaml: `
+project: test
+nodes:
+  n1: 10.0.0.1
+services:
+  api:
+    type: server
+    image: api:latest
+    port: 8080
+    healthcheck: /health
+    env:
+      prod:
+        nodes: [n1, nonexistent]
+        host: api.com
+        envfile: .env
+`,
+			wantErr: `node "nonexistent" not defined in nodes`,
 		},
 	}
 
@@ -264,7 +370,7 @@ services:
     healthcheck: /health
     env:
       prod:
-        node: nonexistent
+        nodes: [nonexistent]
         host: api.com
         envfile: .env
 `
@@ -626,7 +732,7 @@ services:
     bogus: true
     env:
       prod:
-        node: n1
+        nodes: [n1]
         host: api.com
         envfile: .env
 `
@@ -656,7 +762,7 @@ services:
       - /host/path:/container/path
     env:
       prod:
-        node: n1
+        nodes: [n1]
         host: api.com
         envfile: .env
 `
@@ -728,7 +834,7 @@ services:
       - /host/only
     env:
       prod:
-        node: n1
+        nodes: [n1]
         host: api.com
         envfile: .env
 `,

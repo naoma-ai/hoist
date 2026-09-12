@@ -181,12 +181,12 @@ func testConfig() config {
 				Healthcheck: "/health",
 				Env: map[string]envConfig{
 					"staging": {
-						Node:    "web1",
+						Nodes:   []string{"web1"},
 						Host:    "api.staging.example.com",
 						EnvFile: "/etc/backend/staging.env",
 					},
 					"production": {
-						Node:    "web2",
+						Nodes:   []string{"web2"},
 						Host:    "api.example.com",
 						EnvFile: "/etc/backend/production.env",
 					},
