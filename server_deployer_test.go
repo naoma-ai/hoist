@@ -461,6 +461,7 @@ func TestServerDeploySameTag(t *testing.T) {
 	mock := &mockSSHRunner{
 		responses: []mockRunResult{
 			{},                     // docker pull
+			{output: "0123abcd"},   // docker ps -q: the running container
 			{},                     // docker rename
 			{},                     // docker run
 			{output: "172.17.0.2"}, // docker inspect
@@ -484,20 +485,23 @@ func TestServerDeploySameTag(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Expect: pull, rename, run, docker inspect, curl healthcheck, docker ps, stop old, rm old = 8 commands.
-	if len(mock.commands) < 8 {
-		t.Fatalf("expected at least 8 commands, got %d: %v", len(mock.commands), mock.commands)
+	// Expect: pull, ps -q, rename, run, docker inspect, curl healthcheck, docker ps, stop old, rm old = 9 commands.
+	if len(mock.commands) < 9 {
+		t.Fatalf("expected at least 9 commands, got %d: %v", len(mock.commands), mock.commands)
 	}
 
 	if !strings.HasPrefix(mock.commands[0], "docker pull") {
 		t.Errorf("cmd[0] = %q, want docker pull", mock.commands[0])
 	}
-	expectedRename := "docker rename backend-main-abc1234-20250101000000 backend-main-abc1234-20250101000000-old"
-	if mock.commands[1] != expectedRename {
-		t.Errorf("cmd[1] = %q, want %q", mock.commands[1], expectedRename)
+	if !strings.HasPrefix(mock.commands[1], "docker ps -q") {
+		t.Errorf("cmd[1] = %q, want docker ps -q", mock.commands[1])
 	}
-	if !strings.HasPrefix(mock.commands[2], "docker run") {
-		t.Errorf("cmd[2] = %q, want docker run", mock.commands[2])
+	expectedRename := "docker rename backend-main-abc1234-20250101000000 backend-main-abc1234-20250101000000-old"
+	if mock.commands[2] != expectedRename {
+		t.Errorf("cmd[2] = %q, want %q", mock.commands[2], expectedRename)
+	}
+	if !strings.HasPrefix(mock.commands[3], "docker run") {
+		t.Errorf("cmd[3] = %q, want docker run", mock.commands[3])
 	}
 
 	// Last two: stop, rm the renamed container.
@@ -507,6 +511,41 @@ func TestServerDeploySameTag(t *testing.T) {
 	}
 	if mock.commands[n-1] != "docker rm backend-main-abc1234-20250101000000-old" {
 		t.Errorf("cmd[%d] = %q, want docker rm -old", n-1, mock.commands[n-1])
+	}
+}
+
+func TestServerDeploySameTagNodeWithoutContainer(t *testing.T) {
+	cfg := testConfig()
+	mock := &mockSSHRunner{
+		responses: []mockRunResult{
+			{},                     // docker pull
+			{output: ""},           // docker ps -q: nothing running under that name
+			{},                     // docker run
+			{output: "172.17.0.2"}, // docker inspect
+			{output: "OK"},         // curl healthcheck
+			{output: "backend-main-abc1234-20250101000000"}, // docker ps
+		},
+	}
+
+	d := &serverDeployer{
+		cfg:          cfg,
+		dial:         func(_ string) (sshRunner, error) { return mock, nil },
+		pollInterval: 10 * time.Millisecond,
+		pollTimeout:  1 * time.Second,
+	}
+
+	tag := "main-abc1234-20250101000000"
+	if err := d.deploy(context.Background(), "backend", "staging", tag, tag, nopLogf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, cmd := range mock.commands {
+		if strings.HasPrefix(cmd, "docker rename") {
+			t.Errorf("expected no rename on a node without the container, got: %s", cmd)
+		}
+	}
+	if !strings.HasPrefix(mock.commands[2], "docker run") {
+		t.Errorf("cmd[2] = %q, want docker run", mock.commands[2])
 	}
 }
 

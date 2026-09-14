@@ -60,14 +60,21 @@ func (d *serverDeployer) deployNode(ctx context.Context, node, service, env, tag
 	}
 	logf("image pulled")
 
-	// If redeploying the same tag, rename the existing container to avoid name conflict.
+	// Redeploying the running tag: move that container aside so the name is
+	// free. oldTag is read from the first node; another node may not have it.
 	if tag == oldTag && oldTag != "" {
 		oldName := fmt.Sprintf("%s-%s", service, oldTag)
-		tempName := oldName + "-old"
-		renameCmd := fmt.Sprintf("docker rename %s %s", oldName, tempName)
-		logf("$ %s", renameCmd)
-		if _, err := client.run(ctx, renameCmd); err != nil {
-			return fmt.Errorf("renaming old container: %w", err)
+		running, err := client.run(ctx, fmt.Sprintf(`docker ps -q --filter "name=^/%s$"`, oldName))
+		if err != nil {
+			return fmt.Errorf("listing containers: %w", err)
+		}
+		if running != "" {
+			tempName := oldName + "-old"
+			renameCmd := fmt.Sprintf("docker rename %s %s", oldName, tempName)
+			logf("$ %s", renameCmd)
+			if _, err := client.run(ctx, renameCmd); err != nil {
+				return fmt.Errorf("renaming old container: %w", err)
+			}
 		}
 	}
 
